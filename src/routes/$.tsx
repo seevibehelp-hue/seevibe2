@@ -6,11 +6,6 @@ const App = lazy(() => import("@/App"));
 function DeferredApp() {
   const [ready, setReady] = useState(false);
   useEffect(() => {
-    // TanStack Router patches window.history.{push,replace}State to notify its
-    // own router. react-router-dom's BrowserRouter calls replaceState during
-    // its initial render, which triggers a TanStack setState mid-render and
-    // surfaces as a fatal React error. We don't need TanStack history
-    // tracking inside the React Router subtree — restore the natives.
     const nativePush = History.prototype.pushState;
     const nativeReplace = History.prototype.replaceState;
     if ((window.history as any).pushState !== nativePush) {
@@ -29,7 +24,7 @@ function DeferredApp() {
   );
 }
 
-export const Route = createFileRoute("/")({
+export const Route = createFileRoute("/$")({
   ssr: false,
   component: () => (
     <ClientOnly fallback={<div style={{ background: "#000", minHeight: "100vh" }} />}>
