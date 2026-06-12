@@ -2506,6 +2506,37 @@ export type Database = {
         Args: { p_admin_id: string; p_total_amount: number }
         Returns: Json
       }
+      get_my_profile: {
+        Args: never
+        Returns: {
+          bio: string | null
+          contact_info: string | null
+          created_at: string
+          email: string | null
+          fcm_token: string | null
+          followers_count: number
+          following_count: number
+          full_name: string | null
+          id: string
+          is_banned: boolean
+          is_premium: boolean | null
+          is_suspended: boolean
+          is_verified: boolean | null
+          profile_picture: string | null
+          subscription_expires: string | null
+          suspended_at: string | null
+          suspension_reason: string | null
+          updated_at: string | null
+          username: string
+          website_link: string | null
+        }[]
+        SetofOptions: {
+          from: "*"
+          to: "profiles"
+          isOneToOne: false
+          isSetofReturn: true
+        }
+      }
       get_pending_topups_count: { Args: never; Returns: number }
       get_seller_trust_stats: { Args: { p_seller_id: string }; Returns: Json }
       get_top_tippers: {
