@@ -152,7 +152,7 @@ export function Arrangement() {
   const bpm = useDawStore(s => s.bpm);
   const zoom = useDawStore(s => s.timelineZoom);
   const setZoom = useDawStore(s => s.setTimelineZoom);
-  const gridSize = gridSize * zoom;
+  const gridSize = GRID_SIZE * zoom;
   const pixelsPerSecond = (bpm / 60) * 4 * gridSize;
   // We don't subscribe to transportPosition since Playhead is requestAnimationFrame updated
   // transportPosition = useDawStore(s => s.transportPosition); 

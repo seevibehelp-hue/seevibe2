@@ -42,7 +42,7 @@ export function VocalRoll() {
   const setSilenceThreshold = useDawStore(s => s.setSilenceThreshold);
   const zoom = useDawStore(s => s.timelineZoom);
   const setZoom = useDawStore(s => s.setTimelineZoom);
-  const gridSize16 = gridSize16 * zoom;
+  const gridSize16 = GRID_SIZE_16TH * zoom;
   const clip = selectedClipId ? clips[selectedClipId] : null;
   const track = clip ? tracks.find(t => t.id === clip.trackId) : (selectedTrackId ? tracks.find(t => t.id === selectedTrackId) : null);
   const isRecordingAudio = isRecording && track?.type === 'audio';
