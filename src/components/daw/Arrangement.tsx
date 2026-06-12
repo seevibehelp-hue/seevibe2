@@ -12,7 +12,7 @@ const GRID_SIZE = 16; // width in px for one 16th note
 const DEFAULT_TRACK_HEIGHT = 72; 
 const COLLAPSED_TRACK_HEIGHT = 28;
 
-function LiveRecordingClip({ trackId, color }: { trackId: string, color: string }) {
+function LiveRecordingClip({ trackId, color, gridSize }: { trackId: string, color: string, gridSize: number }) {
   const [width, setWidth] = useState(0);
   const [left, setLeft] = useState(0);
   const [peaks, setPeaks] = useState<number[]>([]);
@@ -35,8 +35,8 @@ function LiveRecordingClip({ trackId, color }: { trackId: string, color: string 
       const current16ths = currentTicks / 48;
       const duration16ths = Math.max(0, current16ths - state.recordingStart16ths);
       
-      const newLeft = state.recordingStart16ths * GRID_SIZE;
-      const newWidth = Math.max(GRID_SIZE, duration16ths * GRID_SIZE);
+      const newLeft = state.recordingStart16ths * gridSize;
+      const newWidth = Math.max(gridSize, duration16ths * gridSize);
       
       setLeft(prevLeft => Math.abs(prevLeft - newLeft) > 1 ? newLeft : prevLeft);
       setWidth(prevWidth => Math.abs(prevWidth - newWidth) > 1 ? newWidth : prevWidth);
@@ -78,8 +78,8 @@ function LiveRecordingClip({ trackId, color }: { trackId: string, color: string 
           key={i}
           className="absolute top-2 bottom-2 rounded border border-red-500 bg-red-500/30 z-30 pointer-events-none overflow-hidden duration-75 flex items-center justify-between gap-[1px]"
           style={{
-            left: left + seg.start16thsOffset * GRID_SIZE,
-            width: Math.max(2, seg.duration16ths * GRID_SIZE),
+            left: left + seg.start16thsOffset * gridSize,
+            width: Math.max(2, seg.duration16ths * gridSize),
           }}
         >
           {seg.peaks.filter((_: any, idx: number) => idx % Math.max(1, Math.floor(seg.peaks.length / 100)) === 0).slice(0, 100).map((p: number, idx: number) => (
@@ -97,8 +97,8 @@ function LiveRecordingClip({ trackId, color }: { trackId: string, color: string 
          <div
             className="absolute top-2 bottom-2 rounded border-r border-y border-red-500 bg-red-500/20 z-30 pointer-events-none overflow-hidden duration-75 flex items-center justify-between gap-[1px]"
             style={{
-              left: left + (segments.length > 0 ? (segments[segments.length - 1].start16thsOffset + segments[segments.length - 1].duration16ths) * GRID_SIZE : 0),
-              width: Math.max(2, width - (segments.length > 0 ? (segments[segments.length - 1].start16thsOffset + segments[segments.length - 1].duration16ths) * GRID_SIZE : 0)),
+              left: left + (segments.length > 0 ? (segments[segments.length - 1].start16thsOffset + segments[segments.length - 1].duration16ths) * gridSize : 0),
+              width: Math.max(2, width - (segments.length > 0 ? (segments[segments.length - 1].start16thsOffset + segments[segments.length - 1].duration16ths) * gridSize : 0)),
             }}
           >
             {peaks.filter((_: any, idx: number) => idx % Math.max(1, Math.floor(peaks.length / 100)) === 0).slice(-100).map((p: number, idx: number) => (
@@ -150,7 +150,10 @@ export function Arrangement() {
   const clipboardClips = useDawStore(s => s.clipboardClips);
   const selectedTrackId = useDawStore(s => s.selectedTrackId);
   const bpm = useDawStore(s => s.bpm);
-  const pixelsPerSecond = (bpm / 60) * 4 * GRID_SIZE;
+  const zoom = useDawStore(s => s.timelineZoom);
+  const setZoom = useDawStore(s => s.setTimelineZoom);
+  const gridSize = gridSize * zoom;
+  const pixelsPerSecond = (bpm / 60) * 4 * gridSize;
   // We don't subscribe to transportPosition since Playhead is requestAnimationFrame updated
   // transportPosition = useDawStore(s => s.transportPosition); 
 
@@ -165,7 +168,7 @@ export function Arrangement() {
     const unsubscribe = timelineEvents.subscribe((event) => {
       if (event.type === 'AddClip') {
         if (arrangementRef.current) {
-          const clipX = event.startTime * GRID_SIZE;
+          const clipX = event.startTime * gridSize;
           const container = arrangementRef.current;
           container.scrollTo({
             left: Math.max(0, clipX - 160),
@@ -174,7 +177,7 @@ export function Arrangement() {
         }
       } else if (event.type === 'MoveClip') {
         if (arrangementRef.current) {
-          const clipX = event.newStartTime * GRID_SIZE;
+          const clipX = event.newStartTime * gridSize;
           const container = arrangementRef.current;
           container.scrollTo({
             left: Math.max(0, clipX - 160),
@@ -283,11 +286,11 @@ export function Arrangement() {
       }
       
       if (playheadRef.current) {
-        playheadRef.current.style.transform = `translateX(${position * GRID_SIZE}px)`;
+        playheadRef.current.style.transform = `translateX(${position * gridSize}px)`;
       }
       
       if ((state.isRecording || state.playbackState === 'playing') && arrangementRef.current) {
-         const playheadX = position * GRID_SIZE;
+         const playheadX = position * gridSize;
          const scrollLeft = arrangementRef.current.scrollLeft;
          const width = arrangementRef.current.clientWidth;
          
@@ -311,7 +314,7 @@ export function Arrangement() {
 
     if (resizingClip) {
       const dx = e.clientX - resizingClip.startX;
-      let dx16ths = Math.round(dx / GRID_SIZE);
+      let dx16ths = Math.round(dx / gridSize);
       setClipResizeDelta({ dx16ths });
       return;
     }
@@ -320,7 +323,7 @@ export function Arrangement() {
     
     const dx = e.clientX - dragStartX;
     const dy = e.clientY - dragStartY;
-    let dx16ths = Math.round(dx / GRID_SIZE);
+    let dx16ths = Math.round(dx / gridSize);
 
     setClipDragDelta({ dx16ths, dyPx: dy });
   };
@@ -334,7 +337,7 @@ export function Arrangement() {
     if (draggingClips) {
         const dx = e.clientX - dragStartX;
         const dy = e.clientY - dragStartY;
-        const dx16ths = Math.round(dx / GRID_SIZE);
+        const dx16ths = Math.round(dx / gridSize);
 
         if (dx16ths !== 0 || dy !== 0) {
             draggingClips.forEach(c => {
@@ -356,7 +359,7 @@ export function Arrangement() {
 
     if (resizingClip) {
         const dx = e.clientX - resizingClip.startX;
-        const dx16ths = Math.round(dx / GRID_SIZE);
+        const dx16ths = Math.round(dx / gridSize);
         if (dx16ths !== 0) {
             const clip = clips[resizingClip.id];
             const speed = clip?.speed || 1;
@@ -409,7 +412,7 @@ export function Arrangement() {
     if (clipboardClips && clipboardClips.length > 0) {
       const rect = e.currentTarget.getBoundingClientRect();
       const dx = e.clientX - rect.left;
-      const pos16ths = Math.max(0, dx / GRID_SIZE);
+      const pos16ths = Math.max(0, dx / gridSize);
       const snapped16ths = Math.round(pos16ths);
       setPasteTarget({
         trackId,
@@ -561,7 +564,7 @@ export function Arrangement() {
     setPasteTarget(null);
     const rect = e.currentTarget.getBoundingClientRect();
     const dx = e.clientX - rect.left;
-    let pos16ths = dx / GRID_SIZE;
+    let pos16ths = dx / gridSize;
     
     // Optional grid snap could go here
     pos16ths = Math.max(0, pos16ths);
@@ -581,8 +584,11 @@ export function Arrangement() {
       const end = c.startTime + c.duration;
       if (end > max16ths) max16ths = end + 64; // pad 4 bars extra
   });
-  const widthPx = `${max16ths * GRID_SIZE}px`;
+  const widthPx = `${max16ths * gridSize}px`;
   const numRulerBars = Math.ceil(max16ths / 4);
+  // Seconds ruler — pxPerSecond = (bpm/60) * 4 sixteenths/beat * gridSize
+  const pxPerSecondRuler = (bpm / 60) * 4 * gridSize;
+  const totalSeconds = Math.ceil((max16ths * gridSize) / Math.max(1, pxPerSecondRuler));
 
   return (
     <div 
@@ -624,21 +630,32 @@ export function Arrangement() {
           onClick={handleRulerClick}
         >
           <div className="relative flex-1">
-            {Array.from({ length: numRulerBars }).map((_, i) => (
-              <div 
-                key={i} 
-                className="absolute h-full border-l border-[#333] text-[9px] text-gray-500 pl-1 pt-1 pointer-events-none select-none"
-                style={{ left: i * 4 * GRID_SIZE }}
-              >
-                {i}
-              </div>
-            ))}
+            {Array.from({ length: totalSeconds + 1 }).map((_, i) => {
+              const isMinute = i > 0 && i % 60 === 0;
+              const isMajor = i % 5 === 0;
+              const label = isMinute ? `${i / 60}m` : `${i}`;
+              return (
+                <div
+                  key={i}
+                  className={`absolute h-full border-l text-[9px] pl-1 pt-1 pointer-events-none select-none ${isMinute ? 'border-[#00FFBC]/50 text-[#00FFBC]' : isMajor ? 'border-[#555] text-gray-400' : 'border-[#333] text-gray-600'}`}
+                  style={{ left: i * pxPerSecondRuler }}
+                >
+                  {isMajor || isMinute ? label : ''}
+                </div>
+              );
+            })}
           </div>
         </div>
         
         {/* Toolbar floating top-right (sticky) */}
         <div className="sticky top-8 right-4 w-full flex justify-end z-20 pointer-events-none px-4">
-            <div className="flex gap-2 pointer-events-auto bg-[#1A1A1A] p-1 rounded-md border border-[#333] opacity-80 hover:opacity-100 transition-opacity">
+            <div className="flex gap-2 pointer-events-auto bg-[#1A1A1A] p-1 rounded-md border border-[#333] opacity-80 hover:opacity-100 transition-opacity items-center">
+               <div className="flex items-center gap-1 px-1 border-r border-[#333] pr-2">
+                 <button onClick={() => setZoom(Math.max(0.25, zoom - 0.25))} className="text-[10px] font-bold text-gray-400 hover:text-white w-5 h-5 rounded hover:bg-[#333]" title="Zoom out">−</button>
+                 <span className="text-[9px] text-gray-500 font-mono w-8 text-center">{Math.round(zoom * 100)}%</span>
+                 <button onClick={() => setZoom(Math.min(4, zoom + 0.25))} className="text-[10px] font-bold text-gray-400 hover:text-white w-5 h-5 rounded hover:bg-[#333]" title="Zoom in">+</button>
+               </div>
+
                <button 
                  onClick={() => markAllClips()}
                  className="text-[10px] uppercase font-bold text-gray-400 hover:text-white px-2 py-1 rounded hover:bg-[#333]"
@@ -691,7 +708,7 @@ export function Arrangement() {
           style={{ 
             width: widthPx,
             backgroundImage: 'linear-gradient(to right, #1A1A1A 1px, transparent 1px), linear-gradient(to right, #2A2A2A 1px, transparent 1px)',
-            backgroundSize: `${GRID_SIZE}px 100%, ${GRID_SIZE * 4}px 100%`,
+            backgroundSize: `${gridSize}px 100%, ${gridSize * 4}px 100%`,
             opacity: 0.5
           }} 
         />
@@ -777,8 +794,8 @@ export function Arrangement() {
                       : isActive ? 'border-[#00FF9C] z-10 shadow-[0_0_8px_#00FF9C]' : 'hover:brightness-110'
                   } ${clip.muted ? 'opacity-50 grayscale' : ''}`}
                   style={{
-                    left: displayStartTime * GRID_SIZE,
-                    width: displayDuration * GRID_SIZE,
+                    left: displayStartTime * gridSize,
+                    width: displayDuration * gridSize,
                     backgroundColor: clip.isGhost ? 'rgba(16, 185, 129, 0.1)' : isActive ? `${track.color}40` : `${track.color}20`,
                     borderColor: clip.isGhost ? '#00FF9C' : isActive ? `${track.color}90` : `${track.color}40`,
                     touchAction: 'none'
@@ -967,7 +984,7 @@ export function Arrangement() {
                 </motion.div>
               );
             })}
-            <LiveRecordingClip trackId={track.id} color={track.color} />
+            <LiveRecordingClip trackId={track.id} color={track.color} gridSize={gridSize} />
             {pasteTarget && pasteTarget.trackId === track.id && (
               <button
                 onClick={(e) => {
@@ -977,7 +994,7 @@ export function Arrangement() {
                 }}
                 className="absolute z-40 bg-[#00FF9C] hover:bg-[#00E58B] active:scale-95 text-black font-extrabold px-3 py-1.5 rounded-full shadow-lg shadow-black/80 text-[11px] flex items-center gap-1.5 transition-all outline-none border border-black/20"
                 style={{
-                  left: pasteTarget.startTime * GRID_SIZE,
+                  left: pasteTarget.startTime * gridSize,
                   top: '50%',
                   transform: 'translate(-50%, -50%)',
                 }}

@@ -1023,6 +1023,54 @@ export type Database = {
           },
         ]
       }
+      platform_samples: {
+        Row: {
+          bpm: number
+          category: string
+          created_at: string
+          created_by: string | null
+          duration16ths: number
+          file_path: string
+          file_size: number | null
+          id: string
+          is_active: boolean
+          mime_type: string | null
+          music_key: string | null
+          public_url: string
+          title: string
+        }
+        Insert: {
+          bpm?: number
+          category?: string
+          created_at?: string
+          created_by?: string | null
+          duration16ths?: number
+          file_path: string
+          file_size?: number | null
+          id?: string
+          is_active?: boolean
+          mime_type?: string | null
+          music_key?: string | null
+          public_url: string
+          title: string
+        }
+        Update: {
+          bpm?: number
+          category?: string
+          created_at?: string
+          created_by?: string | null
+          duration16ths?: number
+          file_path?: string
+          file_size?: number | null
+          id?: string
+          is_active?: boolean
+          mime_type?: string | null
+          music_key?: string | null
+          public_url?: string
+          title?: string
+        }
+        Relationships: []
+      }
       profiles: {
         Row: {
           bio: string | null

@@ -40,6 +40,9 @@ export function VocalRoll() {
   const transportPosition = useDawStore(s => s.transportPosition);
   const silenceThreshold = useDawStore(s => s.silenceThreshold);
   const setSilenceThreshold = useDawStore(s => s.setSilenceThreshold);
+  const zoom = useDawStore(s => s.timelineZoom);
+  const setZoom = useDawStore(s => s.setTimelineZoom);
+  const gridSize16 = gridSize16 * zoom;
   const clip = selectedClipId ? clips[selectedClipId] : null;
   const track = clip ? tracks.find(t => t.id === clip.trackId) : (selectedTrackId ? tracks.find(t => t.id === selectedTrackId) : null);
   const isRecordingAudio = isRecording && track?.type === 'audio';
@@ -135,7 +138,7 @@ export function VocalRoll() {
   // Scroll matching on select
   useEffect(() => {
     if (clip && containerRef.current) {
-      containerRef.current.scrollLeft = Math.max(0, clip.startTime * GRID_SIZE_16TH - 100);
+      containerRef.current.scrollLeft = Math.max(0, clip.startTime * gridSize16 - 100);
     }
   }, [clip?.id]);
 
@@ -278,7 +281,7 @@ export function VocalRoll() {
         const secondsPer16th = 15 / state.bpm;
         pos16ths = Tone.Transport.seconds / secondsPer16th;
       }
-      const coordX = pos16ths * GRID_SIZE_16TH;
+      const coordX = pos16ths * gridSize16;
       if (playheadRef.current) {
         playheadRef.current.style.transform = `translateX(${coordX}px)`;
       }
@@ -344,7 +347,7 @@ export function VocalRoll() {
         const dy = e.clientY - draggingNote.startY;
         const dx = e.clientX - draggingNote.startX;
         let dyMidi = -Math.round(dy / 24); 
-        let dx16ths = Math.round(dx / GRID_SIZE_16TH);
+        let dx16ths = Math.round(dx / gridSize16);
 
         // Snap to grid/scale vertically
         if (isSnapEnabled && track) {
@@ -387,7 +390,7 @@ export function VocalRoll() {
         }
       } else if (resizingNote) {
         const dx = e.clientX - resizingNote.startX;
-        const dx16ths = Math.round(dx / GRID_SIZE_16TH);
+        const dx16ths = Math.round(dx / gridSize16);
         setNoteResizeDelta({ dx16ths });
       } else if (drawingState && clip) {
         const note = clip.vocalNotes?.find(n => n.id === drawingState.noteId);
@@ -1220,6 +1223,12 @@ export function VocalRoll() {
 
               <hr className="border-neutral-800 my-1" />
 
+              {/* Zoom controls */}
+              <button onClick={() => setZoom(Math.min(4, zoom + 0.25))} className="h-7 w-full rounded-lg flex items-center justify-center text-zinc-400 hover:text-white hover:bg-[#222] text-[11px] font-bold" title="Zoom in">+</button>
+              <div className="text-[8px] text-zinc-500 font-mono text-center">{Math.round(zoom * 100)}%</div>
+              <button onClick={() => setZoom(Math.max(0.25, zoom - 0.25))} className="h-7 w-full rounded-lg flex items-center justify-center text-zinc-400 hover:text-white hover:bg-[#222] text-[11px] font-bold" title="Zoom out">−</button>
+
+
               {/* Tool Option: Pointer Cursor */}
               <button 
                 onClick={() => setActiveTool('pointer')}
@@ -1342,7 +1351,7 @@ export function VocalRoll() {
             <div 
               className="relative shrink-0"
               style={{ 
-                width: Math.max((clip.duration || 32) + (clip.startTime || 0) + 240, 256) * GRID_SIZE_16TH, 
+                width: Math.max((clip.duration || 32) + (clip.startTime || 0) + 240, 256) * gridSize16, 
                 minWidth: "120%",
                 cursor: activeTool === 'pencil' ? 'cell' : (activeTool === 'blade' ? 'col-resize' : 'default')
               }}
@@ -1354,30 +1363,34 @@ export function VocalRoll() {
                 onClick={(e) => {
                   const rect = e.currentTarget.getBoundingClientRect();
                   const dx = e.clientX - rect.left;
-                  const pos16ths = dx / GRID_SIZE_16TH;
+                  const pos16ths = dx / gridSize16;
                   useDawStore.getState().setTransportPosition(pos16ths);
                   Tone.Transport.position = `0:0:${pos16ths}`;
                 }}
               >
-                {Array.from({ length: Math.ceil(((clip?.startTime || 0) + (clip.duration || 32) + 240) / 4) }).map((_, i) => {
-                  const isDownbeat = i % 4 === 0;
-                  const barNum = Math.floor(i / 4) + 1;
-                  const leftX = i * 4 * GRID_SIZE_16TH;
-                  return (
-                    <div 
-                      key={`grid_bar_tick_${i}`} 
-                      className={`absolute h-full flex flex-col justify-end pb-1 pr-1 border-l pointer-events-none ${isDownbeat ? 'border-neutral-700 w-12' : 'border-neutral-800/40 w-8'} pl-1`}
-                      style={{ left: leftX }}
-                    >
-                      {isDownbeat && (
-                        <span className="text-[9px] text-[#FA9534] font-mono font-black">{barNum}</span>
-                      )}
-                      {!isDownbeat && (
-                        <span className="text-[7.5px] text-zinc-600 font-mono">.{i % 4}</span>
-                      )}
-                    </div>
-                  );
-                })}
+                {(() => {
+                  const bpm = useDawStore.getState().bpm;
+                  const pxPerSecond = (bpm / 60) * 4 * gridSize16;
+                  const totalPx = ((clip?.startTime || 0) + (clip.duration || 32) + 240) * gridSize16;
+                  const totalSec = Math.ceil(totalPx / Math.max(1, pxPerSecond));
+                  return Array.from({ length: totalSec + 1 }).map((_, i) => {
+                    const isMinute = i > 0 && i % 60 === 0;
+                    const isMajor = i % 5 === 0;
+                    return (
+                      <div
+                        key={`sec_${i}`}
+                        className={`absolute h-full flex flex-col justify-end pb-1 border-l pointer-events-none pl-1 ${isMinute ? 'border-[#00FFBC]/50' : isMajor ? 'border-neutral-700' : 'border-neutral-800/40'}`}
+                        style={{ left: i * pxPerSecond }}
+                      >
+                        {(isMajor || isMinute) && (
+                          <span className={`text-[9px] font-mono font-black ${isMinute ? 'text-[#00FFBC]' : 'text-[#FA9534]'}`}>
+                            {isMinute ? `${i / 60}m` : i}
+                          </span>
+                        )}
+                      </div>
+                    );
+                  });
+                })()}
               </div>
 
               {/* BACKGROUND WAVEFORM OVERLAY */}
@@ -1412,7 +1425,7 @@ export function VocalRoll() {
 
               {/* VERTICAL GRID LINES */}
               {Array.from({ length: Math.ceil(((clip?.startTime || 0) + (clip.duration || 32) + 240) / 16) }).map((_, i) => (
-                 <div key={`grid_vert_${i}`} className="absolute h-full top-0 bottom-0 border-l border-neutral-800/40 pointer-events-none z-10" style={{ left: i * 16 * GRID_SIZE_16TH }} />
+                 <div key={`grid_vert_${i}`} className="absolute h-full top-0 bottom-0 border-l border-neutral-800/40 pointer-events-none z-10" style={{ left: i * 16 * gridSize16 }} />
               ))}
 
               {/* ACTIVE NOTES BLOBS */}
@@ -1480,8 +1493,8 @@ export function VocalRoll() {
                     className={`absolute z-20 h-5 rounded-lg cursor-pointer flex flex-col justify-center items-center group transition-transform duration-75 select-none overflow-hidden`}
                     style={{
                       top: visualRowIndex * 24 + 32 + 2,
-                      left: (displayStart + (clip?.startTime || 0)) * GRID_SIZE_16TH,
-                      width: displayDur * GRID_SIZE_16TH,
+                      left: (displayStart + (clip?.startTime || 0)) * gridSize16,
+                      width: displayDur * gridSize16,
                       backgroundColor: blobColor,
                       boxShadow: glowStyle,
                       border: isMarked ? "1px solid #FFFFFF" : "1px solid rgba(0,0,0,0.15)",

@@ -491,16 +491,9 @@ export function ChatView() {
           return;
         }
       }
-      // Offline / Anonymous local fallback
-      const localUsd = localStorage.getItem('local_wallet_usd');
-      const localNaira = localStorage.getItem('local_wallet_naira');
-      if (localUsd && localNaira) {
-        setWallet({ balance_usd: Number(localUsd), balance_naira: Number(localNaira) });
-      } else {
-        localStorage.setItem('local_wallet_usd', '10.00');
-        localStorage.setItem('local_wallet_naira', '16000');
-        setWallet({ balance_usd: 10.00, balance_naira: 16000 });
-      }
+      // No anonymous free credits — anonymous users must sign in & fund their wallet.
+      setWallet({ balance_usd: 0, balance_naira: 0 });
+
     } catch (e) {
       console.error("Failed to load wallet balance: ", e);
     } finally {
@@ -2245,39 +2238,41 @@ export function ChatView() {
 
       if (!isLocalDemo && user) {
         try {
-          // Update Supabase
-          const { error: updErr } = await supabase
-            .from('wallets')
-            .update({
-              balance_usd: updatedUsd,
-              balance_naira: updatedNaira
-            })
-            .eq('user_id', user.id);
-
-          if (!updErr) {
-            // Insert transaction history record in real Supabase db!
-            await supabase.from('wallet_transactions').insert({
-              user_id: user.id,
-              amount_naira: 320,
-              amount_usd: 0.20,
-              type: 'ai_assistant',
-              description: `AI Assistant Command: "${userMessage.substring(0, 35)}${userMessage.length > 35 ? '...' : ''}"`
+          const { data: chargeRes, error: chargeErr } = await supabase.rpc('charge_ai_prompt', {
+            p_user_id: user.id,
+            p_provider_id: null,
+            p_prompt: userMessage,
+            p_cost_usd: 0.20,
+          });
+          if (chargeErr || (chargeRes && (chargeRes as any).success === false)) {
+            const reason = (chargeRes as any)?.reason || chargeErr?.message || 'unknown';
+            addChatMessage({
+              role: 'assistant',
+              content: reason === 'insufficient_funds'
+                ? `🚫 **Insufficient funds**: Your wallet has ₦${(chargeRes as any).balance_naira?.toLocaleString?.() ?? '0'}. This prompt costs ₦${(chargeRes as any).required_naira?.toLocaleString?.() ?? '320'}. Open **Wallet** to top up.`
+                : `🚫 **Charge failed**: ${reason}. Please try again.`,
             });
-          } else {
-            console.warn("Wallet update returned error, falling back locally:", updErr);
-            localStorage.setItem('local_wallet_usd', updatedUsd.toString());
-            localStorage.setItem('local_wallet_naira', updatedNaira.toString());
+            setIsLoading(false);
+            return;
           }
-        } catch (dbErr) {
-          console.warn("Deduction database error, writing locally to proceed:", dbErr);
-          localStorage.setItem('local_wallet_usd', updatedUsd.toString());
-          localStorage.setItem('local_wallet_naira', updatedNaira.toString());
+        } catch (dbErr: any) {
+          addChatMessage({
+            role: 'assistant',
+            content: `🚫 **Wallet error**: ${dbErr?.message || 'Could not deduct AI credits.'} Please retry.`,
+          });
+          setIsLoading(false);
+          return;
         }
       } else {
-        // Store in local storage for offline/anonymous users!
-        localStorage.setItem('local_wallet_usd', updatedUsd.toString());
-        localStorage.setItem('local_wallet_naira', updatedNaira.toString());
+        // Anonymous users may not consume AI credits.
+        addChatMessage({
+          role: 'assistant',
+          content: `🚫 **Sign in required**: Please sign in and fund your wallet to use AI features.`,
+        });
+        setIsLoading(false);
+        return;
       }
+
 
       // Update local wallet state UI instantly
       setWallet({ balance_usd: updatedUsd, balance_naira: updatedNaira });
