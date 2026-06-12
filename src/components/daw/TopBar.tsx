@@ -134,12 +134,25 @@ export function TopBar({ onHome }: { onHome?: () => void }) {
       const buffer = await new Tone.ToneAudioBuffer().load(url);
       const durationSecs = buffer.duration;
       const duration16ths = Math.ceil((durationSecs / 60) * state.bpm * 4);
-      
-      useDawStore.getState().addClip(newTrackId, useDawStore.getState().transportPosition, url, undefined, duration16ths);
+
+      // Extract waveform peaks for visual display in the timeline
+      let peaks: number[] | undefined;
+      try {
+        const raw = buffer.get();
+        if (raw) {
+          const { extractPeaks } = await import('../../audio/peakExtractor');
+          peaks = extractPeaks(raw, Math.max(64, Math.min(1024, Math.floor(durationSecs * 32))));
+        }
+      } catch (peakErr) {
+        console.warn("Peak extraction failed; clip will show without waveform", peakErr);
+      }
+
+      useDawStore.getState().addClip(newTrackId, useDawStore.getState().transportPosition, url, peaks, duration16ths);
     } catch(err) {
       console.error("Failed to load audio buffer for import", err);
       useDawStore.getState().addClip(newTrackId, useDawStore.getState().transportPosition, url, undefined, 32);
     }
+
   };
 
   const processStemSeparation = async () => {
@@ -196,8 +209,14 @@ export function TopBar({ onHome }: { onHome?: () => void }) {
           color: stem.color
         });
 
-        // Add clip
-        useDawStore.getState().addClip(newTrackId, startPosition, stemUrl, undefined, duration16ths);
+        // Add clip with extracted peaks
+        let stemPeaks: number[] | undefined;
+        try {
+          const { extractPeaks } = await import('../../audio/peakExtractor');
+          stemPeaks = extractPeaks(stem.buffer, Math.max(64, Math.min(1024, Math.floor(stem.buffer.duration * 32))));
+        } catch {}
+        useDawStore.getState().addClip(newTrackId, startPosition, stemUrl, stemPeaks, duration16ths);
+
       }
 
     } catch (err) {

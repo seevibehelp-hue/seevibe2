@@ -133,34 +133,95 @@ export function AiProducer() {
     setProgress({ msg: 'Reserving credits…', pct: 0.02 });
 
     try {
-      // 1) Atomic deduction via RPC
-      const { data: deduct, error: dErr } = await supabase.rpc('deduct_for_ai_prompt', {
-        p_amount_usd: COST_USD,
+      // 1) Atomic deduction via RPC (returns insufficient_funds without giving free credit)
+      const { data: chargeRes, error: dErr } = await supabase.rpc('charge_ai_prompt', {
+        p_user_id: user.id,
+        p_provider_id: null,
         p_prompt: text,
-        p_description: 'AI Producer song generation',
+        p_cost_usd: COST_USD,
       });
-      if (dErr) throw new Error(dErr.message || 'Wallet deduction failed');
-      const newBal = Array.isArray(deduct) ? deduct[0]?.new_balance_usd : (deduct as any)?.new_balance_usd;
-      if (newBal !== undefined) setBalance(Number(newBal));
+      if (dErr) throw new Error(dErr.message || 'Wallet charge failed');
+      if (chargeRes && (chargeRes as any).success === false) {
+        const reason = (chargeRes as any).reason;
+        if (reason === 'insufficient_funds') {
+          throw new Error(`Insufficient funds — you have ₦${(chargeRes as any).balance_naira?.toLocaleString?.() ?? '0'}, need ₦${(chargeRes as any).required_naira?.toLocaleString?.() ?? '320'}. Top up in Wallet.`);
+        }
+        throw new Error(`Charge failed: ${reason}`);
+      }
+      // Refresh balance from DB after charge
+      const { data: w } = await supabase.from('wallets').select('balance_usd').eq('user_id', user.id).maybeSingle();
+      if (w) setBalance(Number(w.balance_usd || 0));
 
-      // 2) Upload vocals (if any)
+
+      // 2) Upload vocals (if any) + analyze structure for vocal-aware AI
       let vocalsUrl: string | null = null;
+      let vocalAnalysis: any = null;
       if (vocalsBlob) {
-        setProgress({ msg: 'Uploading vocals…', pct: 0.08 });
+        setProgress({ msg: 'Uploading vocals…', pct: 0.05 });
         const ext = vocalsName.split('.').pop() || 'webm';
         const path = `${user.id}/vocals/${Date.now()}.${ext}`;
         vocalsUrl = await uploadToBucket(path, vocalsBlob, vocalsBlob.type || 'audio/webm');
+
+        // Analyze vocal: detect BPM-equivalent, silence regions, phrases
+        try {
+          setProgress({ msg: 'Analyzing vocal structure…', pct: 0.1 });
+          const arrayBuf = await vocalsBlob.arrayBuffer();
+          const Ctx = (window.AudioContext || (window as any).webkitAudioContext);
+          const ctx = new Ctx();
+          const decoded = await ctx.decodeAudioData(arrayBuf.slice(0));
+          const durationSec = decoded.duration;
+          const assumedBpm = 100; // ruler-based default; analyzer is BPM-tolerant
+          const [{ analyzeAudioPitch }, { VocalAnalyzerProcessor }] = await Promise.all([
+            import('../audio/vocalAnalysis'),
+            import('../audio/vocal-analyzer-processor'),
+          ]);
+          const notes = await analyzeAudioPitch(decoded, assumedBpm, 0.01);
+          const total16ths = (durationSec / 60) * assumedBpm * 4;
+          const phrases = VocalAnalyzerProcessor.detectPhrases(notes, total16ths);
+          const structure = VocalAnalyzerProcessor.mapPhrasesToSongStructure(phrases, total16ths);
+          vocalAnalysis = {
+            durationSec,
+            assumedBpm,
+            phraseCount: phrases.length,
+            phrases: phrases.slice(0, 24).map(p => ({
+              startSec: (p.startTime16ths / 4) * (60 / assumedBpm),
+              endSec: (p.endTime16ths / 4) * (60 / assumedBpm),
+              loudness: Number(p.averageLoudness.toFixed(4)),
+              pitchVariance: Number(p.pitchVariance.toFixed(2)),
+            })),
+            sections: structure.sections.map(s => ({
+              type: s.type,
+              name: s.name,
+              startSec: (s.startBar * 16 / 4) * (60 / assumedBpm),
+              lengthSec: (s.lengthBars * 16 / 4) * (60 / assumedBpm),
+            })),
+          };
+          try { await ctx.close(); } catch {}
+        } catch (analyzeErr) {
+          console.warn("Vocal analysis failed; proceeding without it", analyzeErr);
+        }
       }
 
       // 3) Ask AI for arrangement JSON
       const requestedDur = parseDuration(text);
-      const durationSec = requestedDur ?? (120 + Math.floor(Math.random() * 60)); // 2-3 min default
+      const durationSec = vocalAnalysis?.durationSec
+        ? Math.min(240, Math.max(30, Math.round(vocalAnalysis.durationSec)))
+        : (requestedDur ?? (120 + Math.floor(Math.random() * 60)));
       setProgress({ msg: 'AI composing…', pct: 0.15 });
 
-      // Detect user region for culturally-aware genre selection
+      // Detect user region for culturally-aware genre selection (timezone is more reliable than language)
       let region = 'unknown';
       try {
-        region = (navigator.language || 'unknown').split('-')[1] || navigator.language || 'unknown';
+        const tz = Intl.DateTimeFormat().resolvedOptions().timeZone || '';
+        // Map common timezones to ISO country hints
+        const tzCountry: Record<string,string> = {
+          'Africa/Lagos':'NG','Africa/Accra':'GH','Africa/Johannesburg':'ZA','Africa/Nairobi':'KE','Africa/Cairo':'EG',
+          'America/New_York':'US','America/Los_Angeles':'US','America/Chicago':'US','America/Sao_Paulo':'BR',
+          'America/Mexico_City':'MX','America/Jamaica':'JM',
+          'Europe/London':'GB','Europe/Paris':'FR','Europe/Berlin':'DE','Europe/Madrid':'ES','Europe/Rome':'IT',
+          'Asia/Tokyo':'JP','Asia/Seoul':'KR','Asia/Kolkata':'IN','Asia/Shanghai':'CN','Asia/Bangkok':'TH',
+        };
+        region = tzCountry[tz] || (navigator.language || '').split('-')[1] || tz || 'unknown';
       } catch {}
 
       // Try to extract an explicit genre from the user's text
@@ -181,12 +242,14 @@ export function AiProducer() {
           seed: crypto.randomUUID(),
           region,
           requestedGenre,
+          vocalAnalysis,
         }),
       });
       if (!aiRes.ok) {
         const j = await aiRes.json().catch(() => ({}));
         throw new Error(j.error || `AI error (${aiRes.status})`);
       }
+
       const { arrangement } = await aiRes.json() as { arrangement: SongArrangement };
 
       // 4) Render to WAV

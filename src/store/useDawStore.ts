@@ -8,6 +8,7 @@ type PlaybackState = 'stopped' | 'playing' | 'paused';
 
 interface DawState {
   bpm: number;
+  timelineZoom: number; // 1 = 100%, multiplies pixel-per-16th on rulers/rolls
   playbackState: PlaybackState;
   tracks: DawTrack[];
   clips: Record<string, DawClip>;
@@ -48,6 +49,7 @@ interface DawState {
   setSelectedAudioInputId: (id: string | null) => void;
   setSelectedAudioOutputId: (id: string | null) => void;
   setBpm: (bpm: number) => void;
+  setTimelineZoom: (z: number) => void;
   setProjectKey: (key: string) => void;
   setProjectScale: (scale: string) => void;
   setMetronomeEnabled: (enabled: boolean) => void;
@@ -219,6 +221,7 @@ const initialClip: DawClip = {
 
 export const useDawStore = create<DawState>()(temporal((set, get) => ({
   bpm: 120,
+  timelineZoom: 1,
   playbackState: 'stopped',
   tracks: [initialTrack],
   clips: { 'clip_1': initialClip },
@@ -357,6 +360,7 @@ export const useDawStore = create<DawState>()(temporal((set, get) => ({
   setShellBindingGranted: (val) => set({ shellBindingGranted: val }),
 
   setBpm: (bpm) => set({ bpm: typeof bpm === 'string' ? parseFloat(bpm) || 120 : bpm }),
+  setTimelineZoom: (z) => set({ timelineZoom: Math.max(0.25, Math.min(4, z)) }),
   setProjectKey: (key) => set({ projectKey: key }),
   setProjectScale: (scale) => set({ projectScale: scale }),
   setMetronomeEnabled: (enabled) => set({ metronomeEnabled: enabled }),

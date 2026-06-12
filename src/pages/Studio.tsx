@@ -551,7 +551,7 @@ export default function StudioShell() {
   }
 
   return (
-    <div className="flex flex-col h-full w-full bg-background text-[#E0E0E0] font-sans overflow-hidden">
+    <div id="studio-root" className="flex flex-col h-full w-full bg-background text-[#E0E0E0] font-sans overflow-hidden">
       {syncNotice && (
         <div id="project-sync-notice" className="fixed top-14 left-1/2 transform -translate-x-1/2 z-50 bg-[#00FFBC]/25 border border-[#00FFBC]/35 text-[#00FFBC] text-[11px] font-black uppercase tracking-widest pl-4 pr-3 py-2 rounded-full shadow-[0_4px_25px_rgba(0,255,188,0.25)] flex items-center gap-3 animate-bounce">
           <Sparkles size={11} className="animate-spin text-fuchsia-400" />
@@ -947,12 +947,37 @@ export default function StudioShell() {
                       const aiPromptHistory = (state.chatMessages || [])
                         .filter((m: any) => m.role === 'user')
                         .map((m: any) => String(m.content || ''));
-                      const tracksMeta = (state.tracks || []).map((t: any) => ({
-                        name: t.name,
-                        type: t.type,
-                        clipCount: Object.values(state.clips || {}).filter((c: any) => c.trackId === t.id).length,
-                        fxSummary: (t.fx || []).map((f: any) => f.type).filter(Boolean).join(', '),
-                      }));
+                      const tracksMeta = (state.tracks || []).map((t: any) => {
+                        const fx = t.fx && typeof t.fx === 'object' ? t.fx : {};
+                        const enabledFx = Array.isArray(fx)
+                          ? fx.map((f: any) => f?.type).filter(Boolean)
+                          : Object.entries(fx)
+                              .filter(([, v]: any) => v && (v.enabled === true || v.enabled === undefined))
+                              .map(([k]) => k);
+                        return {
+                          name: t.name,
+                          type: t.type,
+                          clipCount: Object.values(state.clips || {}).filter((c: any) => c.trackId === t.id).length,
+                          fxSummary: enabledFx.join(', '),
+                        };
+                      });
+
+                      // Capture visual snapshot of the studio for proof of work
+                      let snapshotPng: ArrayBuffer | undefined;
+                      try {
+                        const html2canvas = (await import('html2canvas')).default;
+                        const target = document.getElementById('studio-root') || document.body;
+                        const canvas = await html2canvas(target, {
+                          backgroundColor: '#0a0a0a',
+                          scale: Math.min(1.5, window.devicePixelRatio || 1),
+                          logging: false,
+                          useCORS: true,
+                        });
+                        const blob: Blob = await new Promise((res) => canvas.toBlob((b) => res(b!), 'image/png', 0.92)!);
+                        snapshotPng = await blob.arrayBuffer();
+                      } catch (snapErr) {
+                        console.warn('Snapshot capture failed, continuing without image', snapErr);
+                      }
                       const durationSec = wavBuf.byteLength / 4 / 44100; // rough estimate (16-bit stereo)
 
                       const blob = await generateLicenseProofPdf({
@@ -968,6 +993,7 @@ export default function StudioShell() {
                         tracks: tracksMeta,
                         aiPromptHistory,
                         masterWavBuffer: wavBuf,
+                        snapshotPng,
                       });
 
                       const url = URL.createObjectURL(blob);

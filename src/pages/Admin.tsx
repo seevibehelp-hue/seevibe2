@@ -20,6 +20,13 @@ export function Admin() {
   const [sampleBars, setSampleBars] = useState('4');
   const [sampleFile, setSampleFile] = useState<File | null>(null);
   const [isUploadingSample, setIsUploadingSample] = useState(false);
+  const [detectingMeta, setDetectingMeta] = useState(false);
+  const [editingSampleId, setEditingSampleId] = useState<string | null>(null);
+  const [editTitle, setEditTitle] = useState('');
+  const [editBpm, setEditBpm] = useState('120');
+  const [editKey, setEditKey] = useState('');
+  const [editCategory, setEditCategory] = useState('Uploaded');
+
 
   // Form
   const [pPreset, setPPreset] = useState('OpenAI');
@@ -154,6 +161,56 @@ export function Admin() {
     }
   };
 
+  const handleSampleFileSelect = async (file: File | null) => {
+    setSampleFile(file);
+    if (!file) return;
+    setDetectingMeta(true);
+    try {
+      const { detectSampleMetadata } = await import('../utils/sampleAutoDetect');
+      const meta = await detectSampleMetadata(file);
+      if (!sampleTitle.trim()) setSampleTitle(meta.suggestedTitle);
+      setSampleBpm(String(meta.bpm));
+      setSampleKey(meta.keyLabel);
+      setSampleBars(String(meta.bars));
+    } catch (err) {
+      console.warn('Sample auto-detect failed:', err);
+    } finally {
+      setDetectingMeta(false);
+    }
+  };
+
+  const startEditSample = (s: any) => {
+    setEditingSampleId(s.id);
+    setEditTitle(s.title || '');
+    setEditBpm(String(s.bpm || 120));
+    setEditKey(s.music_key || '');
+    setEditCategory(s.category || 'Uploaded');
+  };
+
+  const saveEditSample = async () => {
+    if (!editingSampleId) return;
+    const { error } = await supabase.from('platform_samples').update({
+      title: editTitle.trim(),
+      bpm: Math.max(1, parseInt(editBpm, 10) || 120),
+      music_key: editKey.trim() || null,
+      category: editCategory.trim() || 'Uploaded',
+    }).eq('id', editingSampleId);
+    if (error) return alert(error.message);
+    const { data } = await supabase.from('platform_samples').select('*').order('created_at', { ascending: false });
+    setSamples(data || []);
+    setEditingSampleId(null);
+  };
+
+  const deleteSample = async (s: any) => {
+    if (!confirm(`Delete sample "${s.title}"? This cannot be undone.`)) return;
+    if (s.file_path) {
+      await supabase.storage.from('platform-samples').remove([s.file_path]).catch(() => {});
+    }
+    const { error } = await supabase.from('platform_samples').delete().eq('id', s.id);
+    if (error) return alert(error.message);
+    setSamples(samples.filter(x => x.id !== s.id));
+  };
+
   return (
     <div className="flex flex-col h-full bg-background p-4 pb-20 overflow-y-auto">
       <div className="flex items-center mb-6">
@@ -162,6 +219,7 @@ export function Admin() {
       </div>
 
       <div className="flex bg-[#141414] rounded-xl p-1 mb-6 gap-1">
+
         <button onClick={() => setTab('users')} className={`flex-1 flex items-center justify-center py-2 rounded-lg text-sm font-medium transition-colors ${tab === 'users' ? 'bg-[#2A2A2A] text-white shadow-sm' : 'text-gray-400'}`}>
           <Users size={16} className="mr-2" /> Users
         </button>
@@ -322,22 +380,46 @@ export function Admin() {
                 <input type="number" value={sampleBars} onChange={e => setSampleBars(e.target.value)} className="w-full bg-[#1A1A1A] border border-[#2A2A2A] rounded-lg px-3 py-2 text-sm focus:border-fuchsia-500 focus:outline-none" />
               </div>
             </div>
-            <input type="file" accept="audio/*" onChange={e => setSampleFile(e.target.files?.[0] || null)} className="w-full text-xs text-gray-300 file:mr-3 file:rounded-lg file:border-0 file:bg-[#2A2A2A] file:px-3 file:py-2 file:text-white" />
-            <button type="submit" disabled={isUploadingSample} className="w-full bg-gradient-to-r from-cyan-500 to-emerald-500 disabled:opacity-50 text-black font-bold rounded-lg py-3 mt-2">
+            <div>
+              <input type="file" accept="audio/*" onChange={e => handleSampleFileSelect(e.target.files?.[0] || null)} className="w-full text-xs text-gray-300 file:mr-3 file:rounded-lg file:border-0 file:bg-[#2A2A2A] file:px-3 file:py-2 file:text-white" />
+              {detectingMeta && <div className="text-[10px] text-cyan-400 mt-1 font-mono">🔍 Auto-detecting BPM, key, and title…</div>}
+              {sampleFile && !detectingMeta && <div className="text-[10px] text-emerald-400 mt-1 font-mono">✓ Detected. Edit fields above if needed.</div>}
+            </div>
+            <button type="submit" disabled={isUploadingSample || detectingMeta} className="w-full bg-gradient-to-r from-cyan-500 to-emerald-500 disabled:opacity-50 text-black font-bold rounded-lg py-3 mt-2">
               {isUploadingSample ? 'Uploading sample...' : 'Upload sample'}
             </button>
           </form>
           <div className="space-y-3">
             {samples.map(s => (
-              <div key={s.id} className="bg-[#141414] p-4 rounded-xl border border-[#222] flex items-center justify-between gap-3">
-                <div className="min-w-0">
-                  <div className="font-bold text-sm truncate">{s.title}</div>
-                  <div className="text-[10px] text-gray-500 truncate">{s.category} • {s.bpm} BPM • {s.music_key || 'No key'} • {Math.round((s.file_size || 0) / 1024)} KB</div>
-                </div>
-                <audio controls src={s.public_url} className="h-8 max-w-[140px]" />
+              <div key={s.id} className="bg-[#141414] p-4 rounded-xl border border-[#222] space-y-2">
+                {editingSampleId === s.id ? (
+                  <div className="space-y-2">
+                    <input value={editTitle} onChange={e => setEditTitle(e.target.value)} placeholder="Title" className="w-full bg-[#1A1A1A] border border-[#2A2A2A] rounded px-2 py-1.5 text-xs" />
+                    <div className="grid grid-cols-3 gap-2">
+                      <input value={editBpm} onChange={e => setEditBpm(e.target.value)} placeholder="BPM" className="bg-[#1A1A1A] border border-[#2A2A2A] rounded px-2 py-1.5 text-xs" />
+                      <input value={editKey} onChange={e => setEditKey(e.target.value)} placeholder="Key" className="bg-[#1A1A1A] border border-[#2A2A2A] rounded px-2 py-1.5 text-xs" />
+                      <input value={editCategory} onChange={e => setEditCategory(e.target.value)} placeholder="Category" className="bg-[#1A1A1A] border border-[#2A2A2A] rounded px-2 py-1.5 text-xs" />
+                    </div>
+                    <div className="flex gap-2">
+                      <button onClick={saveEditSample} className="flex-1 bg-emerald-500 text-black font-bold rounded py-1.5 text-xs">Save</button>
+                      <button onClick={() => setEditingSampleId(null)} className="flex-1 bg-[#222] text-gray-300 rounded py-1.5 text-xs">Cancel</button>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="flex items-center justify-between gap-3">
+                    <div className="min-w-0 flex-1">
+                      <div className="font-bold text-sm truncate">{s.title}</div>
+                      <div className="text-[10px] text-gray-500 truncate">{s.category} • {s.bpm} BPM • {s.music_key || 'No key'} • {Math.round((s.file_size || 0) / 1024)} KB</div>
+                    </div>
+                    <audio controls src={s.public_url} className="h-8 max-w-[140px]" />
+                    <button onClick={() => startEditSample(s)} className="text-[10px] px-2 py-1 rounded bg-fuchsia-500/10 text-fuchsia-400 border border-fuchsia-500/20 hover:bg-fuchsia-500 hover:text-white">Edit</button>
+                    <button onClick={() => deleteSample(s)} className="p-1.5 hover:bg-red-500/10 rounded text-gray-400 hover:text-red-400"><Trash2 size={14} /></button>
+                  </div>
+                )}
               </div>
             ))}
           </div>
+
         </div>
       ) : (
         <div className="space-y-4">

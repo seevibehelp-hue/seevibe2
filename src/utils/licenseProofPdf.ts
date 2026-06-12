@@ -23,6 +23,7 @@ export interface LicenseProofInput {
   }>;
   aiPromptHistory: string[]; // chronological user prompts
   masterWavBuffer: ArrayBuffer; // for SHA-256 fingerprint
+  snapshotPng?: ArrayBuffer; // optional visual snapshot of the project (PNG)
 }
 
 async function sha256Hex(buf: ArrayBuffer): Promise<string> {
@@ -194,6 +195,30 @@ export async function generateLicenseProofPdf(
     font: mono,
     color: rgb(0.5, 0.5, 0.5),
   });
+
+  // Project Visual Snapshot page (proof of arrangement / setup)
+  if (input.snapshotPng) {
+    try {
+      const snap = await pdf.embedPng(input.snapshotPng);
+      const snapPage = pdf.addPage([612, 792]);
+      const pw = snapPage.getWidth();
+      const ph = snapPage.getHeight();
+      snapPage.drawText("PROJECT VISUAL SNAPSHOT", {
+        x: 56, y: ph - 56, size: 14, font: bold, color: rgb(0, 0.6, 0.4),
+      });
+      snapPage.drawText("Captured at time of license proof issue.", {
+        x: 56, y: ph - 74, size: 9, font, color: rgb(0.4, 0.4, 0.4),
+      });
+      const maxW = pw - 112;
+      const maxH = ph - 140;
+      const ratio = Math.min(maxW / snap.width, maxH / snap.height);
+      const w = snap.width * ratio;
+      const h = snap.height * ratio;
+      snapPage.drawImage(snap, { x: (pw - w) / 2, y: 70, width: w, height: h });
+    } catch (e) {
+      console.warn("snapshot embed failed", e);
+    }
+  }
 
   const bytes = await pdf.save();
   return new Blob([bytes as BlobPart], { type: "application/pdf" });

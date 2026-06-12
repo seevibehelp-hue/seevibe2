@@ -28,7 +28,9 @@ export function PianoRoll() {
   const [currentDrawDuration, setCurrentDrawDuration] = useState(4); // 4 = quarter note
   const [snapDivision, setSnapDivision] = useState(1); // 1 = 16th note, 0.5 = 32nd note, 4 = quarter, etc.
   const [scaleOnly, setScaleOnly] = useState(false);
-  const [zoom, setZoom] = useState(1);
+  const zoom = useDawStore((s) => s.timelineZoom);
+  const setZoom = useDawStore((s) => s.setTimelineZoom);
+
 
   const containerRef = useRef<HTMLDivElement>(null);
   const playheadRef = useRef<HTMLDivElement>(null);
@@ -794,19 +796,25 @@ export function PianoRoll() {
               Tone.Transport.position = `0:0:${pos16ths}`;
             }}
           >
-            {Array.from({
-              length: Math.ceil(
-                Math.max((clip?.duration || 32) + 64, 256) / 16,
-              ),
-            }).map((_, i) => (
-              <div
-                key={i}
-                className="absolute h-full border-l border-[#222] text-[7px] text-gray-600 pl-0.5 pointer-events-none select-none"
-                style={{ left: i * 16 * currentGridSize }}
-              >
-                {i + 1}
-              </div>
-            ))}
+            {(() => {
+              const bpm = useDawStore.getState().bpm;
+              const pxPerSecond = (bpm / 60) * 4 * currentGridSize;
+              const totalPx = Math.max((clip?.duration || 32) + 64, 256) * currentGridSize;
+              const totalSec = Math.ceil(totalPx / Math.max(1, pxPerSecond));
+              return Array.from({ length: totalSec + 1 }).map((_, i) => {
+                const isMinute = i > 0 && i % 60 === 0;
+                const isMajor = i % 5 === 0;
+                return (
+                  <div
+                    key={i}
+                    className={`absolute h-full border-l text-[7px] pl-0.5 pointer-events-none select-none ${isMinute ? 'border-[#00FFBC]/50 text-[#00FFBC]' : isMajor ? 'border-[#444] text-gray-400' : 'border-[#222] text-gray-600'}`}
+                    style={{ left: i * pxPerSecond }}
+                  >
+                    {isMajor || isMinute ? (isMinute ? `${i / 60}m` : `${i}`) : ''}
+                  </div>
+                );
+              });
+            })()}
           </div>
 
           {/* Background Vertical Grid Lines */}
