@@ -265,7 +265,7 @@ export const playLowLatencyDrumHit = (noteName: string, velocity: number = 0.8) 
       body.type = 'triangle';
       body.frequency.setValueAtTime(250, now);
       body.frequency.exponentialRampToValueAtTime(120, now + 0.05);
-      bg.gain.setValueAtTime(0.35 * velocity, now);
+      bg.gain.setValueAtTime(0.22 * velocity, now);
       bg.gain.exponentialRampToValueAtTime(0.001, now + 0.12);
       body.connect(bg);
       bg.connect(dest);
@@ -275,7 +275,7 @@ export const playLowLatencyDrumHit = (noteName: string, velocity: number = 0.8) 
       const noise = rawCtx.createBufferSource();
       noise.buffer = noiseBuf(0.2, 2.5);
       const ng = rawCtx.createGain();
-      ng.gain.setValueAtTime(0.25 * velocity, now);
+      ng.gain.setValueAtTime(0.16 * velocity, now);
       ng.gain.exponentialRampToValueAtTime(0.001, now + 0.18);
       const hp = rawCtx.createBiquadFilter();
       hp.type = 'highpass';
@@ -296,7 +296,7 @@ export const playLowLatencyDrumHit = (noteName: string, velocity: number = 0.8) 
         const noise = rawCtx.createBufferSource();
         noise.buffer = noiseBuf(0.15, 3.5);
         const gain = rawCtx.createGain();
-        gain.gain.setValueAtTime(0.18 * velocity, now + delay);
+        gain.gain.setValueAtTime(0.11 * velocity, now + delay);
         gain.gain.exponentialRampToValueAtTime(0.001, now + delay + 0.12);
         const bp = rawCtx.createBiquadFilter();
         bp.type = 'bandpass';
@@ -313,7 +313,7 @@ export const playLowLatencyDrumHit = (noteName: string, velocity: number = 0.8) 
       const noise = rawCtx.createBufferSource();
       noise.buffer = noiseBuf(0.04, 10);
       const gain = rawCtx.createGain();
-      gain.gain.setValueAtTime(0.12 * velocity, now);
+      gain.gain.setValueAtTime(0.08 * velocity, now);
       gain.gain.exponentialRampToValueAtTime(0.001, now + 0.035);
       const hp = rawCtx.createBiquadFilter();
       hp.type = 'highpass';
@@ -327,7 +327,7 @@ export const playLowLatencyDrumHit = (noteName: string, velocity: number = 0.8) 
       const noise = rawCtx.createBufferSource();
       noise.buffer = noiseBuf(0.3, 1.5);
       const gain = rawCtx.createGain();
-      gain.gain.setValueAtTime(0.12 * velocity, now);
+      gain.gain.setValueAtTime(0.08 * velocity, now);
       gain.gain.exponentialRampToValueAtTime(0.001, now + 0.25);
       const hp = rawCtx.createBiquadFilter();
       hp.type = 'highpass';
@@ -341,7 +341,7 @@ export const playLowLatencyDrumHit = (noteName: string, velocity: number = 0.8) 
       const noise = rawCtx.createBufferSource();
       noise.buffer = noiseBuf(1.5, 1.2);
       const gain = rawCtx.createGain();
-      gain.gain.setValueAtTime(0.12 * velocity, now);
+      gain.gain.setValueAtTime(0.08 * velocity, now);
       gain.gain.exponentialRampToValueAtTime(0.001, now + 1.3);
       const hp = rawCtx.createBiquadFilter();
       hp.type = 'highpass';
@@ -368,7 +368,7 @@ export const playLowLatencyDrumHit = (noteName: string, velocity: number = 0.8) 
       filter.Q.setValueAtTime(2.2, now);
       
       gainNode.gain.setValueAtTime(0, now);
-      gainNode.gain.linearRampToValueAtTime(0.14 * velocity, now + 0.002);
+      gainNode.gain.linearRampToValueAtTime(0.09 * velocity, now + 0.002);
       gainNode.gain.exponentialRampToValueAtTime(0.001, now + 0.22);
       
       osc1.connect(filter);
@@ -387,7 +387,7 @@ export const playLowLatencyDrumHit = (noteName: string, velocity: number = 0.8) 
       body.type = 'sine';
       body.frequency.setValueAtTime(140, now);
       body.frequency.exponentialRampToValueAtTime(45, now + 0.08);
-      bg.gain.setValueAtTime(0.35 * velocity, now);
+      bg.gain.setValueAtTime(0.22 * velocity, now);
       bg.gain.exponentialRampToValueAtTime(0.001, now + 0.3);
       body.connect(bg);
       bg.connect(dest);
