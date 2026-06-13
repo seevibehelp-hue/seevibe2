@@ -4,7 +4,7 @@ import { useDawStore } from "../store/useDawStore";
 import { DawTrack, SynthType, TrackType } from "../types/daw";
 import { analyzeAudioPitch } from "./vocalAnalysis";
 import { VocalPipeline } from "./engine/VocalPipeline";
-import { startLowLatencySynth, stopLowLatencySynth, playLowLatencyDrumHit } from "./lowLatencySynth";
+import { startLowLatencySynth, stopLowLatencySynth, stopAllLowLatencyVoices, playLowLatencyDrumHit } from "./lowLatencySynth";
 import JSZip from "jszip";
 
 const globalBufferCache = new Map<string, Tone.ToneAudioBuffer>();
@@ -569,29 +569,23 @@ class AudioEngine {
   public activeMidiRecordings: Map<string, Map<string, { clipId: string; noteId: string; start16ths: number }>> = new Map();
 
   constructor() {
-    // Professional brickwall Limiter (similar to FL Studio default master limiter)
-    this.masterLimiter = new Tone.Compressor({
-      threshold: -0.5, // Standard-loudness brickwall ceiling just below 0dBFS
-      ratio: 20, // Strict limiting ratio
-      attack: 0.001, // Instant brickwall transient catch
-      release: 0.15 // Smooth, natural decay
-    }).toDestination() as any;
+    // Real-time master chain kept intentionally conservative for mobile stability.
+    this.masterLimiter = new Tone.Limiter(-1).toDestination();
     
     const initialVolume = useDawStore.getState().masterVolume ?? 0;
     // -6 dB padding provides perfect high-precision summing headroom in modern 32-bit float audio engines
     this.masterHeadroom = new Tone.Volume(initialVolume - 6);
     
-    // Warm glue compressor
+    // Gentle glue compression to match the cleaner offline render character.
     this.masterCompressor = new Tone.Compressor({
-      threshold: -14,
-      ratio: 2.2,
-      attack: 0.015,
-      release: 0.2
+      threshold: -12,
+      ratio: 3,
+      attack: 0.004,
+      release: 0.18
     });
 
-    // Loudness Maximizer / Gain Booster (equivalent to FL Studio maximizers or Soundgoodizer presets)
-    // This makeup-booster drives the headroom-summed signals directly into the limiter ceiling (+12.5 dB)
-    this.masterMaximizer = new Tone.Volume(12.5);
+    // Keep a small safety trim in real-time to avoid speaker-tear artifacts on mobile.
+    this.masterMaximizer = new Tone.Volume(-1.3);
     
     this.masterHeadroom.connect(this.masterCompressor);
     this.masterCompressor.connect(this.masterMaximizer);
@@ -644,6 +638,11 @@ class AudioEngine {
             autoGainControl: true
          }
       });
+
+      if (!this.vocalPipeline) {
+        this.vocalPipeline = new VocalPipeline();
+        await this.vocalPipeline.init();
+      }
       
       this.micNode = new Tone.Gain(1);
       const rawContext = Tone.getContext().rawContext as any;
@@ -807,12 +806,9 @@ class AudioEngine {
     this.initPromise = (async () => {
       await Tone.start();
       console.log("Audio Engine Started");
-      
-      this.vocalPipeline = new VocalPipeline();
-      await this.vocalPipeline.init();
-      
-      // Optimize lookAhead latency dynamically to prevent buffer starvation and crackling spikes
-      Tone.getContext().lookAhead = 0.12;
+
+      // Keep the live engine responsive without over-buffering.
+      Tone.getContext().lookAhead = 0.05;
 
       try {
         await preloadOfflineDrums();
@@ -2459,6 +2455,7 @@ class AudioEngine {
         } catch (e) {}
       }
       if (ctx) this.hardStopAudioPlayers(ctx);
+      stopAllLowLatencyVoices();
     } else {
       this.trackContexts.forEach((ctx) => {
         if (ctx.synth && !ctx.synth.disposed) {
@@ -2469,6 +2466,7 @@ class AudioEngine {
         }
         this.hardStopAudioPlayers(ctx);
       });
+      stopAllLowLatencyVoices();
     }
   }
 
@@ -2486,6 +2484,7 @@ class AudioEngine {
         }
       } catch (e) {}
     });
+    stopAllLowLatencyVoices();
   }
 
   /**
