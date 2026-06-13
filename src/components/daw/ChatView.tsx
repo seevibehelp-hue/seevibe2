@@ -17,6 +17,7 @@ import * as Tone from 'tone';
 import { getFinalVibe, applyVibeToEngineAndTimeline, generateProceduralNotesForVibe, livePreviewController, SongStructure, SongSection, defaultSongStructure, detectAndInsertDrops, adaptDropIntensity, createImpactDrop, aiDetermineOptimalDrops, renewCompositionSeed } from '../../utils/vibeEngine';
 import { audioEngine } from '../../audio/engine';
 import { analyzeAudioPitch } from '../../audio/vocalAnalysis';
+import { apiUrl } from '../../lib/apiBase';
 
 // Enum matches: ANALYZE_VOCAL, GENERATE_DRUMS, GENERATE_BASS, GENERATE_CHORDS, GENERATE_MELODY, GENERATE_FX, ARRANGE_SONG, PROCESS_VOCALS, MIX_PROJECT, MASTER_PROJECT, EXPORT_PROJECT, FULL_AUTO_PRODUCE
 export type AiAction = 
