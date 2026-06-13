@@ -5,6 +5,7 @@ import { ArrowLeft, Send, Mic, Square, Upload, Sparkles, Play, Pause, Download, 
 import { useAuth } from '../contexts/AuthContext';
 import { supabase } from '../integrations/supabase/client';
 import { renderArrangementToWav, SongArrangement } from '../utils/songRenderer';
+import { apiUrl } from '../lib/apiBase';
 
 interface ChatMsg {
   role: 'user' | 'assistant';
@@ -229,7 +230,7 @@ export function AiProducer() {
       const requestedGenre = genreMatch ? genreMatch[0] : '';
 
       const { data: { session } } = await supabase.auth.getSession();
-      const aiRes = await fetch('/api/ai/produce-song', {
+      const aiRes = await fetch(apiUrl('/api/ai/produce-song'), {
         method: 'POST',
         headers: {
           'content-type': 'application/json',

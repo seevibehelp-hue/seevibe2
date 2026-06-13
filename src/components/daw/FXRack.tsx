@@ -337,7 +337,8 @@ export function FXRack() {
     try {
       const { supabase } = await import('@/integrations/supabase/client');
       const { data: { session } } = await supabase.auth.getSession();
-      const res = await fetch('/api/ai/enhance-vocal', {
+      const { apiUrl } = await import('@/lib/apiBase');
+      const res = await fetch(apiUrl('/api/ai/enhance-vocal'), {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
