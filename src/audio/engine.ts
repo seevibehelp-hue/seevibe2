@@ -2438,6 +2438,7 @@ class AudioEngine {
           if ((ctx.synth as any).releaseAll) (ctx.synth as any).releaseAll();
         } catch (e) {}
       }
+      if (ctx) this.hardStopAudioPlayers(ctx);
     } else {
       this.trackContexts.forEach((ctx) => {
         if (ctx.synth && !ctx.synth.disposed) {
@@ -2446,9 +2447,59 @@ class AudioEngine {
             if ((ctx.synth as any).releaseAll) (ctx.synth as any).releaseAll();
           } catch (e) {}
         }
+        this.hardStopAudioPlayers(ctx);
       });
     }
   }
+
+  /**
+   * Force-stops every audio Tone.Player on a track context. This is needed on
+   * mobile WebViews where Transport.pause()/stop() sometimes leaves underlying
+   * BufferSource nodes ringing (the "cricket"/"teared speaker" artifact).
+   */
+  private hardStopAudioPlayers(ctx: any) {
+    if (!ctx || !ctx.players) return;
+    ctx.players.forEach((p: any) => {
+      try {
+        if (p && !p.disposed && p.state === 'started') {
+          p.stop();
+        }
+      } catch (e) {}
+    });
+  }
+
+  /**
+   * Re-attach all audio-clip players after the page becomes visible again.
+   * On mobile, when the WebView is backgrounded the AudioContext is suspended
+   * and Tone.Players that were started via `.sync().start()` lose their
+   * underlying BufferSource; the only reliable recovery is to dispose and
+   * rebuild them. MIDI tracks resynthesize on demand so they are unaffected.
+   */
+  public async refreshAudioPlayersAfterResume() {
+    try {
+      const raw = (Tone.context.rawContext as AudioContext);
+      if (raw.state === 'suspended') {
+        await raw.resume().catch(() => {});
+      }
+      this.trackContexts.forEach((ctx) => {
+        if (!ctx?.players) return;
+        ctx.players.forEach((p: any, clipId: string) => {
+          try {
+            p.unsync();
+            p.stop();
+            p.dispose();
+          } catch (e) {}
+          ctx.players.delete(clipId);
+        });
+      });
+      // Force a re-sync on next tick so all audio clips get rebuilt and re-scheduled.
+      const state = useDawStore.getState();
+      this.syncToneWithState(state);
+    } catch (e) {
+      console.warn('[engine] refreshAudioPlayersAfterResume failed:', e);
+    }
+  }
+
 
   async getAudioBuffer(trackId: string, clipId: string, clipUrl?: string): Promise<AudioBuffer | null> {
     const ctx = this.trackContexts.get(trackId);
