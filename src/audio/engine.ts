@@ -1682,6 +1682,7 @@ class AudioEngine {
       Tone.Transport.state === "started"
     ) {
       Tone.Transport.pause();
+      this.trackContexts.forEach((ctx) => this.hardStopAudioPlayers(ctx));
     } else if (
       state.playbackState === "stopped" &&
       Tone.Transport.state !== "stopped"
