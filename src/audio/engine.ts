@@ -606,6 +606,25 @@ class AudioEngine {
     this.metronomeSynth = new Tone.MembraneSynth({ volume: -14 }).connect(this.masterHeadroom);
 
     this.initMidi();
+    this.installVisibilityHandler();
+  }
+
+  private visibilityHandlerInstalled = false;
+  private installVisibilityHandler() {
+    if (this.visibilityHandlerInstalled) return;
+    if (typeof document === 'undefined') return;
+    this.visibilityHandlerInstalled = true;
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState === 'visible') {
+        // Rebuild audio-clip players that mobile WebViews drop when backgrounded.
+        this.refreshAudioPlayersAfterResume();
+      }
+    });
+    window.addEventListener('pageshow', () => {
+      if (document.visibilityState === 'visible') {
+        this.refreshAudioPlayersAfterResume();
+      }
+    });
   }
 
   public async getMediaStream(
