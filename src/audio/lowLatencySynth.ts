@@ -104,7 +104,7 @@ export const startLowLatencySynth = (noteName: string, synthType: string = 'poly
     
     const env = rawCtx.createGain();
     const attack = oscType === 'sine' ? 0.06 : 0.01;
-    const volume = 0.22 * velocity;
+    const volume = 0.12 * velocity;
     
     env.gain.setValueAtTime(0, now);
     env.gain.linearRampToValueAtTime(volume, now + attack);
@@ -229,7 +229,7 @@ export const playLowLatencyDrumHit = (noteName: string, velocity: number = 0.8) 
       body.type = 'sine';
       body.frequency.setValueAtTime(160, now);
       body.frequency.exponentialRampToValueAtTime(35, now + 0.08);
-      bg.gain.setValueAtTime(0.55 * velocity, now);
+      bg.gain.setValueAtTime(0.34 * velocity, now);
       bg.gain.exponentialRampToValueAtTime(0.001, now + 0.45);
       body.connect(bg);
       bg.connect(dest);
@@ -241,7 +241,7 @@ export const playLowLatencyDrumHit = (noteName: string, velocity: number = 0.8) 
       click.type = 'triangle';
       click.frequency.setValueAtTime(4500, now);
       click.frequency.exponentialRampToValueAtTime(200, now + 0.015);
-      cg.gain.setValueAtTime(0.2 * velocity, now);
+      cg.gain.setValueAtTime(0.12 * velocity, now);
       cg.gain.exponentialRampToValueAtTime(0.001, now + 0.02);
       click.connect(cg);
       cg.connect(dest);
@@ -252,7 +252,7 @@ export const playLowLatencyDrumHit = (noteName: string, velocity: number = 0.8) 
       const sg = rawCtx.createGain();
       sub.type = 'sine';
       sub.frequency.setValueAtTime(50, now);
-      sg.gain.setValueAtTime(0.35 * velocity, now);
+      sg.gain.setValueAtTime(0.2 * velocity, now);
       sg.gain.exponentialRampToValueAtTime(0.001, now + 0.35);
       sub.connect(sg);
       sg.connect(dest);
