@@ -5,6 +5,7 @@ import { ArrowLeft, Send, Mic, Square, Upload, Sparkles, Play, Pause, Download, 
 import { useAuth } from '../contexts/AuthContext';
 import { supabase } from '../integrations/supabase/client';
 import { renderArrangementToWav, SongArrangement } from '../utils/songRenderer';
+import { apiUrl } from '../lib/apiBase';
 
 interface ChatMsg {
   role: 'user' | 'assistant';
