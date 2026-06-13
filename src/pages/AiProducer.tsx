@@ -230,7 +230,7 @@ export function AiProducer() {
       const requestedGenre = genreMatch ? genreMatch[0] : '';
 
       const { data: { session } } = await supabase.auth.getSession();
-      const aiRes = await fetch('/api/ai/produce-song', {
+      const aiRes = await fetch(apiUrl('/api/ai/produce-song'), {
         method: 'POST',
         headers: {
           'content-type': 'application/json',
