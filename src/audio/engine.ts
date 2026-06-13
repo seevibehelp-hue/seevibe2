@@ -638,6 +638,11 @@ class AudioEngine {
             autoGainControl: true
          }
       });
+
+      if (!this.vocalPipeline) {
+        this.vocalPipeline = new VocalPipeline();
+        await this.vocalPipeline.init();
+      }
       
       this.micNode = new Tone.Gain(1);
       const rawContext = Tone.getContext().rawContext as any;
@@ -2450,6 +2455,7 @@ class AudioEngine {
         } catch (e) {}
       }
       if (ctx) this.hardStopAudioPlayers(ctx);
+      stopAllLowLatencyVoices();
     } else {
       this.trackContexts.forEach((ctx) => {
         if (ctx.synth && !ctx.synth.disposed) {
@@ -2460,6 +2466,7 @@ class AudioEngine {
         }
         this.hardStopAudioPlayers(ctx);
       });
+      stopAllLowLatencyVoices();
     }
   }
 
