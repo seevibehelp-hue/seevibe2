@@ -1441,7 +1441,7 @@ class AudioEngine {
 
   private createSynth(type: SynthType): any {
     if (type === "membrane") {
-      return new DrumKitSynth();
+      return new ReferenceDrumKitSynth();
     }
     if (type === "pluck") {
       const p = new Tone.PolySynth(Tone.Synth, {
