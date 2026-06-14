@@ -207,6 +207,7 @@ export const renderReferenceDrumAt = (
   vel = 1,
 ) => {
   const drumType = (drumTypeRaw || '').toLowerCase();
+  const destination = ((dest as any)?.input || dest) as AudioNode;
   const noiseBuf = (duration: number, decay: number) => {
     const size = Math.ceil(ctx.sampleRate * duration);
     const b = ctx.createBuffer(1, size, ctx.sampleRate);
@@ -224,7 +225,7 @@ export const renderReferenceDrumAt = (
     body.frequency.exponentialRampToValueAtTime(35, now + 0.08);
     bg.gain.setValueAtTime(0.34 * vel, now);
     bg.gain.exponentialRampToValueAtTime(0.001, now + 0.45);
-    body.connect(bg); bg.connect(dest); body.start(now); body.stop(now + 0.45);
+    body.connect(bg); bg.connect(destination); body.start(now); body.stop(now + 0.45);
 
     const click = ctx.createOscillator(); const cg = ctx.createGain();
     click.type = 'triangle';
@@ -232,14 +233,14 @@ export const renderReferenceDrumAt = (
     click.frequency.exponentialRampToValueAtTime(200, now + 0.015);
     cg.gain.setValueAtTime(0.12 * vel, now);
     cg.gain.exponentialRampToValueAtTime(0.001, now + 0.02);
-    click.connect(cg); cg.connect(dest); click.start(now); click.stop(now + 0.03);
+    click.connect(cg); cg.connect(destination); click.start(now); click.stop(now + 0.03);
 
     const sub = ctx.createOscillator(); const sg = ctx.createGain();
     sub.type = 'sine';
     sub.frequency.setValueAtTime(50, now);
     sg.gain.setValueAtTime(0.2 * vel, now);
     sg.gain.exponentialRampToValueAtTime(0.001, now + 0.35);
-    sub.connect(sg); sg.connect(dest); sub.start(now); sub.stop(now + 0.35);
+    sub.connect(sg); sg.connect(destination); sub.start(now); sub.stop(now + 0.35);
   } else if (drumType === '808' || drumType === 'sub' || drumType === '808 sub') {
     const osc = ctx.createOscillator(); const gain = ctx.createGain();
     const dist = ctx.createWaveShaper();
