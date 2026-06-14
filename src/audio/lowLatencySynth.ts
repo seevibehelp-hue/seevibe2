@@ -4,32 +4,26 @@ import { audioEngine } from './engine';
 
 const activeVoices = new Map<string, { osc1: OscillatorNode; osc2?: OscillatorNode; env: GainNode }>();
 
-const getNativeNode = (node: any): AudioNode | null => {
-  if (!node) return null;
-  if (node instanceof AudioNode) return node;
-  if (typeof node.connect === 'function' && typeof node.disconnect === 'function' && !node.input && !node.output) {
-    return node;
-  }
-  if (node.input) {
-    if (node.input instanceof AudioNode) return node.input;
-    return getNativeNode(node.input);
-  }
-  return null;
-};
+// Audition path (drum pads + keyboard pre-recording hits) bypasses the shared
+// Tone master compressor/limiter so transient drum layers cannot slam the
+// master chain and color subsequent timeline playback. We route through a
+// single shared audition gain straight to the device output, matching the
+// clean playback path used by the reference mobile-music-pro engine.
+let auditionBus: GainNode | null = null;
+let auditionBusCtx: AudioContext | null = null;
 
-// Defensive helper to connect nodes to Tone's master bus if available, otherwise fallback to native destination
 const getDestinationNode = (rawCtx: AudioContext): AudioNode => {
   try {
-    if (audioEngine && audioEngine.masterHeadroom) {
-      const native = getNativeNode(audioEngine.masterHeadroom);
-      if (native) return native;
+    if (!auditionBus || auditionBusCtx !== rawCtx) {
+      auditionBus = rawCtx.createGain();
+      auditionBus.gain.value = 0.85;
+      auditionBus.connect(rawCtx.destination);
+      auditionBusCtx = rawCtx;
     }
-    if (Tone.Destination) {
-      const native = getNativeNode(Tone.Destination);
-      if (native) return native;
-    }
-  } catch (e) {}
-  return rawCtx.destination;
+    return auditionBus;
+  } catch (e) {
+    return rawCtx.destination;
+  }
 };
 
 export const noteToFrequency = (noteName: string): number => {
