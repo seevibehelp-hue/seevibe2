@@ -4,7 +4,7 @@ import { useDawStore } from "../store/useDawStore";
 import { DawTrack, SynthType, TrackType } from "../types/daw";
 import { analyzeAudioPitch } from "./vocalAnalysis";
 import { VocalPipeline } from "./engine/VocalPipeline";
-import { startLowLatencySynth, stopLowLatencySynth, stopAllLowLatencyVoices, playLowLatencyDrumHit } from "./lowLatencySynth";
+import { startLowLatencySynth, stopLowLatencySynth, stopAllLowLatencyVoices, playLowLatencyDrumHit, mapDrumNoteToType, renderReferenceDrumAt } from "./lowLatencySynth";
 import JSZip from "jszip";
 
 const globalBufferCache = new Map<string, Tone.ToneAudioBuffer>();
@@ -526,6 +526,44 @@ class DrumKitSynth {
 
   triggerRelease() {}
 
+  releaseAll() {}
+}
+
+class ReferenceDrumKitSynth {
+  public disposed = false;
+  private destination: AudioNode | null = null;
+
+  connect(destination: any) {
+    this.destination = ((destination as any)?.input || destination) as AudioNode;
+    return this;
+  }
+
+  toDestination() {
+    this.destination = ((Tone.getDestination() as any)?.input || Tone.getDestination()) as AudioNode;
+    return this;
+  }
+
+  dispose() {
+    this.destination = null;
+    this.disposed = true;
+  }
+
+  triggerAttackRelease(note: string | string[], _duration: string | number, time?: any, velocity?: number) {
+    this.triggerAttack(note, time, velocity);
+  }
+
+  triggerAttack(note: string | string[], time?: any, velocity?: number) {
+    if (this.disposed || !this.destination) return;
+    const ctx = Tone.getContext().rawContext as AudioContext;
+    const notes = Array.isArray(note) ? note : [note];
+    const startTime = typeof time === 'number' ? time : Tone.immediate();
+    const safeVelocity = Math.min(1, Math.max(0, velocity ?? 0.8));
+    notes.forEach((value) => {
+      renderReferenceDrumAt(ctx, this.destination!, mapDrumNoteToType(value), startTime, safeVelocity);
+    });
+  }
+
+  triggerRelease() {}
   releaseAll() {}
 }
 
