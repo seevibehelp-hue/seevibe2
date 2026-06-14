@@ -323,7 +323,7 @@ export const renderReferenceDrumAt = (
     gainNode.gain.linearRampToValueAtTime(0.09 * vel, now + 0.002);
     gainNode.gain.exponentialRampToValueAtTime(0.001, now + 0.22);
 
-    osc1.connect(filter); osc2.connect(filter); filter.connect(gainNode); gainNode.connect(dest);
+    osc1.connect(filter); osc2.connect(filter); filter.connect(gainNode); gainNode.connect(destination);
     osc1.start(now); osc2.start(now); osc1.stop(now + 0.25); osc2.stop(now + 0.25);
   } else if (drumType.includes('tom')) {
     const freq = drumType.includes('hi') ? 220 : drumType.includes('lo') ? 90 : 150;
@@ -333,14 +333,14 @@ export const renderReferenceDrumAt = (
     osc.frequency.exponentialRampToValueAtTime(freq, now + 0.06);
     gain.gain.setValueAtTime(0.22 * vel, now);
     gain.gain.exponentialRampToValueAtTime(0.001, now + 0.35);
-    osc.connect(gain); gain.connect(dest); osc.start(now); osc.stop(now + 0.35);
+    osc.connect(gain); gain.connect(destination); osc.start(now); osc.stop(now + 0.35);
   } else {
     const noise = ctx.createBufferSource(); noise.buffer = noiseBuf(0.1, 5);
     const gain = ctx.createGain();
     gain.gain.setValueAtTime(0.12 * vel, now);
     gain.gain.exponentialRampToValueAtTime(0.001, now + 0.1);
     const hp = ctx.createBiquadFilter(); hp.type = 'highpass'; hp.frequency.value = 4000;
-    noise.connect(hp); hp.connect(gain); gain.connect(dest); noise.start(now); noise.stop(now + 0.1);
+    noise.connect(hp); hp.connect(gain); gain.connect(destination); noise.start(now); noise.stop(now + 0.1);
   }
 };
 
