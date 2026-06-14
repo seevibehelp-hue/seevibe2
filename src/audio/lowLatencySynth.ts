@@ -255,7 +255,7 @@ export const renderReferenceDrumAt = (
     osc.frequency.exponentialRampToValueAtTime(40, now + 0.15);
     gain.gain.setValueAtTime(0.5 * vel, now);
     gain.gain.exponentialRampToValueAtTime(0.001, now + 1.2);
-    osc.connect(dist); dist.connect(gain); gain.connect(dest);
+    osc.connect(dist); dist.connect(gain); gain.connect(destination);
     osc.start(now); osc.stop(now + 1.2);
   } else if (drumType === 'snare') {
     const body = ctx.createOscillator(); const bg = ctx.createGain();
@@ -264,7 +264,7 @@ export const renderReferenceDrumAt = (
     body.frequency.exponentialRampToValueAtTime(120, now + 0.05);
     bg.gain.setValueAtTime(0.22 * vel, now);
     bg.gain.exponentialRampToValueAtTime(0.001, now + 0.12);
-    body.connect(bg); bg.connect(dest); body.start(now); body.stop(now + 0.12);
+    body.connect(bg); bg.connect(destination); body.start(now); body.stop(now + 0.12);
 
     const noise = ctx.createBufferSource(); noise.buffer = noiseBuf(0.2, 2.5);
     const ng = ctx.createGain();
@@ -272,7 +272,7 @@ export const renderReferenceDrumAt = (
     ng.gain.exponentialRampToValueAtTime(0.001, now + 0.18);
     const hp = ctx.createBiquadFilter(); hp.type = 'highpass'; hp.frequency.value = 2500;
     const lp = ctx.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = 8000;
-    noise.connect(hp); hp.connect(lp); lp.connect(ng); ng.connect(dest); noise.start(now); noise.stop(now + 0.2);
+    noise.connect(hp); hp.connect(lp); lp.connect(ng); ng.connect(destination); noise.start(now); noise.stop(now + 0.2);
   } else if (drumType === 'clap') {
     for (let layer = 0; layer < 4; layer++) {
       const delay = layer * 0.008;
@@ -282,7 +282,7 @@ export const renderReferenceDrumAt = (
       gain.gain.exponentialRampToValueAtTime(0.001, now + delay + 0.12);
       const bp = ctx.createBiquadFilter(); bp.type = 'bandpass';
       bp.frequency.value = 1500; bp.Q.value = 1.5;
-      noise.connect(bp); bp.connect(gain); gain.connect(dest); noise.start(now + delay); noise.stop(now + delay + 0.15);
+      noise.connect(bp); bp.connect(gain); gain.connect(destination); noise.start(now + delay); noise.stop(now + delay + 0.15);
     }
   } else if (drumType === 'hi-hat' || drumType === 'closed hh' || drumType === 'hat') {
     const noise = ctx.createBufferSource(); noise.buffer = noiseBuf(0.04, 10);
@@ -290,21 +290,21 @@ export const renderReferenceDrumAt = (
     gain.gain.setValueAtTime(0.08 * vel, now);
     gain.gain.exponentialRampToValueAtTime(0.001, now + 0.035);
     const hp = ctx.createBiquadFilter(); hp.type = 'highpass'; hp.frequency.value = 8000;
-    noise.connect(hp); hp.connect(gain); gain.connect(dest); noise.start(now); noise.stop(now + 0.06);
+    noise.connect(hp); hp.connect(gain); gain.connect(destination); noise.start(now); noise.stop(now + 0.06);
   } else if (drumType === 'open hh' || drumType === 'open hat') {
     const noise = ctx.createBufferSource(); noise.buffer = noiseBuf(0.3, 1.5);
     const gain = ctx.createGain();
     gain.gain.setValueAtTime(0.08 * vel, now);
     gain.gain.exponentialRampToValueAtTime(0.001, now + 0.25);
     const hp = ctx.createBiquadFilter(); hp.type = 'highpass'; hp.frequency.value = 7000;
-    noise.connect(hp); hp.connect(gain); gain.connect(dest); noise.start(now); noise.stop(now + 0.35);
+    noise.connect(hp); hp.connect(gain); gain.connect(destination); noise.start(now); noise.stop(now + 0.35);
   } else if (drumType === 'crash') {
     const noise = ctx.createBufferSource(); noise.buffer = noiseBuf(1.5, 1.2);
     const gain = ctx.createGain();
     gain.gain.setValueAtTime(0.08 * vel, now);
     gain.gain.exponentialRampToValueAtTime(0.001, now + 1.3);
     const hp = ctx.createBiquadFilter(); hp.type = 'highpass'; hp.frequency.value = 5000;
-    noise.connect(hp); hp.connect(gain); gain.connect(dest); noise.start(now); noise.stop(now + 1.5);
+    noise.connect(hp); hp.connect(gain); gain.connect(destination); noise.start(now); noise.stop(now + 1.5);
   } else if (drumType === 'rim' || drumType === 'rimshot' || drumType === 'cowbell') {
     const osc1 = ctx.createOscillator();
     const osc2 = ctx.createOscillator();
