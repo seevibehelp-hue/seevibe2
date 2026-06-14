@@ -1,6 +1,6 @@
 // @ts-nocheck
 import * as Tone from 'tone';
-import { audioEngine } from './engine';
+// Audition path intentionally bypasses the Tone master chain (see getDestinationNode)
 
 const activeVoices = new Map<string, { osc1: OscillatorNode; osc2?: OscillatorNode; env: GainNode }>();
 
