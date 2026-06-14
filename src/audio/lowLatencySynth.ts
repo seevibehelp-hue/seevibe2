@@ -1,5 +1,32 @@
 // @ts-nocheck
 import * as Tone from 'tone';
+
+const DRUM_NOTE_TO_TYPE: Record<string, string> = {
+  C4: 'kick',
+  'C#4': 'kick',
+  D4: 'snare',
+  'D#4': 'snare',
+  E4: 'clap',
+  F4: 'hi-hat',
+  'F#4': 'hi-hat',
+  G4: 'open hh',
+  'G#4': 'open hh',
+  A4: 'crash',
+  'A#4': 'crash',
+  B4: 'tom',
+  C5: 'tom hi',
+  D5: 'rim',
+  E5: 'perc',
+  F5: 'perc',
+  G5: 'vox',
+  A5: 'vox',
+  B5: 'fx',
+  C6: 'kick',
+  D6: 'snare',
+};
+
+const referenceMasterGain = 0.85;
+
 // Audition path intentionally bypasses the Tone master chain (see getDestinationNode)
 
 const activeVoices = new Map<string, { osc1: OscillatorNode; osc2?: OscillatorNode; env: GainNode }>();
@@ -16,7 +43,7 @@ const getDestinationNode = (rawCtx: AudioContext): AudioNode => {
   try {
     if (!auditionBus || auditionBusCtx !== rawCtx) {
       auditionBus = rawCtx.createGain();
-      auditionBus.gain.value = 0.85;
+      auditionBus.gain.value = referenceMasterGain;
       auditionBus.connect(rawCtx.destination);
       auditionBusCtx = rawCtx;
     }
@@ -168,23 +195,152 @@ export const stopAllLowLatencyVoices = () => {
   } catch (e) {}
 };
 
-// Procedural Drum Generation
-const createNoiseBuffer = (ctx: AudioContext): AudioBuffer => {
-  const bufferSize = ctx.sampleRate * 2; // 2 seconds of noise
-  const buffer = ctx.createBuffer(1, bufferSize, ctx.sampleRate);
-  const data = buffer.getChannelData(0);
-  for (let i = 0; i < bufferSize; i++) {
-    data[i] = Math.random() * 2 - 1;
-  }
-  return buffer;
+export const mapDrumNoteToType = (noteName: string): string => {
+  return DRUM_NOTE_TO_TYPE[noteName] || DRUM_NOTE_TO_TYPE[noteName.toUpperCase()] || 'perc';
 };
 
-let cachedNoiseBuffer: AudioBuffer | null = null;
-const getNoiseBuffer = (ctx: AudioContext): AudioBuffer => {
-  if (!cachedNoiseBuffer) {
-    cachedNoiseBuffer = createNoiseBuffer(ctx);
+export const renderReferenceDrumAt = (
+  ctx: BaseAudioContext,
+  dest: AudioNode,
+  drumTypeRaw: string,
+  now: number,
+  vel = 1,
+) => {
+  const drumType = (drumTypeRaw || '').toLowerCase();
+  const noiseBuf = (duration: number, decay: number) => {
+    const size = Math.ceil(ctx.sampleRate * duration);
+    const b = ctx.createBuffer(1, size, ctx.sampleRate);
+    const d = b.getChannelData(0);
+    for (let i = 0; i < size; i++) {
+      d[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / size, decay);
+    }
+    return b;
+  };
+
+  if (drumType === 'kick' || drumType === 'boom') {
+    const body = ctx.createOscillator(); const bg = ctx.createGain();
+    body.type = 'sine';
+    body.frequency.setValueAtTime(160, now);
+    body.frequency.exponentialRampToValueAtTime(35, now + 0.08);
+    bg.gain.setValueAtTime(0.34 * vel, now);
+    bg.gain.exponentialRampToValueAtTime(0.001, now + 0.45);
+    body.connect(bg); bg.connect(dest); body.start(now); body.stop(now + 0.45);
+
+    const click = ctx.createOscillator(); const cg = ctx.createGain();
+    click.type = 'triangle';
+    click.frequency.setValueAtTime(4500, now);
+    click.frequency.exponentialRampToValueAtTime(200, now + 0.015);
+    cg.gain.setValueAtTime(0.12 * vel, now);
+    cg.gain.exponentialRampToValueAtTime(0.001, now + 0.02);
+    click.connect(cg); cg.connect(dest); click.start(now); click.stop(now + 0.03);
+
+    const sub = ctx.createOscillator(); const sg = ctx.createGain();
+    sub.type = 'sine';
+    sub.frequency.setValueAtTime(50, now);
+    sg.gain.setValueAtTime(0.2 * vel, now);
+    sg.gain.exponentialRampToValueAtTime(0.001, now + 0.35);
+    sub.connect(sg); sg.connect(dest); sub.start(now); sub.stop(now + 0.35);
+  } else if (drumType === '808' || drumType === 'sub' || drumType === '808 sub') {
+    const osc = ctx.createOscillator(); const gain = ctx.createGain();
+    const dist = ctx.createWaveShaper();
+    const curve = new Float32Array(256);
+    for (let i = 0; i < 256; i++) {
+      const x = (i / 128) - 1;
+      curve[i] = (Math.PI + 2) * x / (Math.PI + 2 * Math.abs(x));
+    }
+    dist.curve = curve;
+    osc.type = 'sine';
+    osc.frequency.setValueAtTime(90, now);
+    osc.frequency.exponentialRampToValueAtTime(40, now + 0.15);
+    gain.gain.setValueAtTime(0.5 * vel, now);
+    gain.gain.exponentialRampToValueAtTime(0.001, now + 1.2);
+    osc.connect(dist); dist.connect(gain); gain.connect(dest);
+    osc.start(now); osc.stop(now + 1.2);
+  } else if (drumType === 'snare') {
+    const body = ctx.createOscillator(); const bg = ctx.createGain();
+    body.type = 'triangle';
+    body.frequency.setValueAtTime(250, now);
+    body.frequency.exponentialRampToValueAtTime(120, now + 0.05);
+    bg.gain.setValueAtTime(0.22 * vel, now);
+    bg.gain.exponentialRampToValueAtTime(0.001, now + 0.12);
+    body.connect(bg); bg.connect(dest); body.start(now); body.stop(now + 0.12);
+
+    const noise = ctx.createBufferSource(); noise.buffer = noiseBuf(0.2, 2.5);
+    const ng = ctx.createGain();
+    ng.gain.setValueAtTime(0.16 * vel, now);
+    ng.gain.exponentialRampToValueAtTime(0.001, now + 0.18);
+    const hp = ctx.createBiquadFilter(); hp.type = 'highpass'; hp.frequency.value = 2500;
+    const lp = ctx.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = 8000;
+    noise.connect(hp); hp.connect(lp); lp.connect(ng); ng.connect(dest); noise.start(now); noise.stop(now + 0.2);
+  } else if (drumType === 'clap') {
+    for (let layer = 0; layer < 4; layer++) {
+      const delay = layer * 0.008;
+      const noise = ctx.createBufferSource(); noise.buffer = noiseBuf(0.15, 3.5);
+      const gain = ctx.createGain();
+      gain.gain.setValueAtTime(0.11 * vel, now + delay);
+      gain.gain.exponentialRampToValueAtTime(0.001, now + delay + 0.12);
+      const bp = ctx.createBiquadFilter(); bp.type = 'bandpass';
+      bp.frequency.value = 1500; bp.Q.value = 1.5;
+      noise.connect(bp); bp.connect(gain); gain.connect(dest); noise.start(now + delay); noise.stop(now + delay + 0.15);
+    }
+  } else if (drumType === 'hi-hat' || drumType === 'closed hh' || drumType === 'hat') {
+    const noise = ctx.createBufferSource(); noise.buffer = noiseBuf(0.04, 10);
+    const gain = ctx.createGain();
+    gain.gain.setValueAtTime(0.08 * vel, now);
+    gain.gain.exponentialRampToValueAtTime(0.001, now + 0.035);
+    const hp = ctx.createBiquadFilter(); hp.type = 'highpass'; hp.frequency.value = 8000;
+    noise.connect(hp); hp.connect(gain); gain.connect(dest); noise.start(now); noise.stop(now + 0.06);
+  } else if (drumType === 'open hh' || drumType === 'open hat') {
+    const noise = ctx.createBufferSource(); noise.buffer = noiseBuf(0.3, 1.5);
+    const gain = ctx.createGain();
+    gain.gain.setValueAtTime(0.08 * vel, now);
+    gain.gain.exponentialRampToValueAtTime(0.001, now + 0.25);
+    const hp = ctx.createBiquadFilter(); hp.type = 'highpass'; hp.frequency.value = 7000;
+    noise.connect(hp); hp.connect(gain); gain.connect(dest); noise.start(now); noise.stop(now + 0.35);
+  } else if (drumType === 'crash') {
+    const noise = ctx.createBufferSource(); noise.buffer = noiseBuf(1.5, 1.2);
+    const gain = ctx.createGain();
+    gain.gain.setValueAtTime(0.08 * vel, now);
+    gain.gain.exponentialRampToValueAtTime(0.001, now + 1.3);
+    const hp = ctx.createBiquadFilter(); hp.type = 'highpass'; hp.frequency.value = 5000;
+    noise.connect(hp); hp.connect(gain); gain.connect(dest); noise.start(now); noise.stop(now + 1.5);
+  } else if (drumType === 'rim' || drumType === 'rimshot' || drumType === 'cowbell') {
+    const osc1 = ctx.createOscillator();
+    const osc2 = ctx.createOscillator();
+    const gainNode = ctx.createGain();
+    const filter = ctx.createBiquadFilter();
+
+    osc1.type = 'square';
+    osc1.frequency.setValueAtTime(540, now);
+    osc2.type = 'square';
+    osc2.frequency.setValueAtTime(800, now);
+    filter.type = 'bandpass';
+    filter.frequency.setValueAtTime(800, now);
+    filter.Q.setValueAtTime(2.2, now);
+
+    gainNode.gain.setValueAtTime(0, now);
+    gainNode.gain.linearRampToValueAtTime(0.09 * vel, now + 0.002);
+    gainNode.gain.exponentialRampToValueAtTime(0.001, now + 0.22);
+
+    osc1.connect(filter); osc2.connect(filter); filter.connect(gainNode); gainNode.connect(dest);
+    osc1.start(now); osc2.start(now); osc1.stop(now + 0.25); osc2.stop(now + 0.25);
+  } else if (drumType.includes('tom')) {
+    const freq = drumType.includes('hi') ? 220 : drumType.includes('lo') ? 90 : 150;
+    const osc = ctx.createOscillator(); const gain = ctx.createGain();
+    osc.type = 'sine';
+    osc.frequency.setValueAtTime(freq * 1.8, now);
+    osc.frequency.exponentialRampToValueAtTime(freq, now + 0.06);
+    gain.gain.setValueAtTime(0.22 * vel, now);
+    gain.gain.exponentialRampToValueAtTime(0.001, now + 0.35);
+    osc.connect(gain); gain.connect(dest); osc.start(now); osc.stop(now + 0.35);
+  } else {
+    const noise = ctx.createBufferSource(); noise.buffer = noiseBuf(0.1, 5);
+    const gain = ctx.createGain();
+    gain.gain.setValueAtTime(0.12 * vel, now);
+    gain.gain.exponentialRampToValueAtTime(0.001, now + 0.1);
+    const hp = ctx.createBiquadFilter(); hp.type = 'highpass'; hp.frequency.value = 4000;
+    noise.connect(hp); hp.connect(gain); gain.connect(dest); noise.start(now); noise.stop(now + 0.1);
   }
-  return cachedNoiseBuffer;
 };
 
 // Procedural sound designers matching mobile-music-pro exactly
@@ -197,197 +353,7 @@ export const playLowLatencyDrumHit = (noteName: string, velocity: number = 0.8) 
     }
     const now = rawCtx.currentTime;
     const dest = getDestinationNode(rawCtx);
-
-    const noiseBuf = (duration: number, decay: number) => {
-      const size = Math.ceil(rawCtx.sampleRate * duration);
-      const b = rawCtx.createBuffer(1, size, rawCtx.sampleRate);
-      const d = b.getChannelData(0);
-      for (let i = 0; i < size; i++) {
-        d[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / size, decay);
-      }
-      return b;
-    };
-
-    const isKick = noteName === 'C4' || noteName === 'C6';
-    const isSnare = noteName === 'D4' || noteName === 'D6';
-    const isClap = noteName === 'E4';
-    const isClosedHat = noteName === 'F4';
-    const isOpenHat = noteName === 'G4';
-    const isCrash = noteName === 'A4';
-    const isCowbell = noteName === 'D5';
-
-    if (isKick) {
-      // Layered kick: body sweep, high triangle click, low sinus sub
-      const body = rawCtx.createOscillator();
-      const bg = rawCtx.createGain();
-      body.type = 'sine';
-      body.frequency.setValueAtTime(160, now);
-      body.frequency.exponentialRampToValueAtTime(35, now + 0.08);
-      bg.gain.setValueAtTime(0.34 * velocity, now);
-      bg.gain.exponentialRampToValueAtTime(0.001, now + 0.45);
-      body.connect(bg);
-      bg.connect(dest);
-      body.start(now);
-      body.stop(now + 0.45);
-
-      const click = rawCtx.createOscillator();
-      const cg = rawCtx.createGain();
-      click.type = 'triangle';
-      click.frequency.setValueAtTime(4500, now);
-      click.frequency.exponentialRampToValueAtTime(200, now + 0.015);
-      cg.gain.setValueAtTime(0.12 * velocity, now);
-      cg.gain.exponentialRampToValueAtTime(0.001, now + 0.02);
-      click.connect(cg);
-      cg.connect(dest);
-      click.start(now);
-      click.stop(now + 0.03);
-
-      const sub = rawCtx.createOscillator();
-      const sg = rawCtx.createGain();
-      sub.type = 'sine';
-      sub.frequency.setValueAtTime(50, now);
-      sg.gain.setValueAtTime(0.2 * velocity, now);
-      sg.gain.exponentialRampToValueAtTime(0.001, now + 0.35);
-      sub.connect(sg);
-      sg.connect(dest);
-      sub.start(now);
-      sub.stop(now + 0.35);
-    } else if (isSnare) {
-      // Layered snare: body tone + highpass noise wire
-      const body = rawCtx.createOscillator();
-      const bg = rawCtx.createGain();
-      body.type = 'triangle';
-      body.frequency.setValueAtTime(250, now);
-      body.frequency.exponentialRampToValueAtTime(120, now + 0.05);
-      bg.gain.setValueAtTime(0.22 * velocity, now);
-      bg.gain.exponentialRampToValueAtTime(0.001, now + 0.12);
-      body.connect(bg);
-      bg.connect(dest);
-      body.start(now);
-      body.stop(now + 0.12);
-
-      const noise = rawCtx.createBufferSource();
-      noise.buffer = noiseBuf(0.2, 2.5);
-      const ng = rawCtx.createGain();
-      ng.gain.setValueAtTime(0.16 * velocity, now);
-      ng.gain.exponentialRampToValueAtTime(0.001, now + 0.18);
-      const hp = rawCtx.createBiquadFilter();
-      hp.type = 'highpass';
-      hp.frequency.setValueAtTime(2500, now);
-      const lp = rawCtx.createBiquadFilter();
-      lp.type = 'lowpass';
-      lp.frequency.setValueAtTime(8000, now);
-      noise.connect(hp);
-      hp.connect(lp);
-      lp.connect(ng);
-      ng.connect(dest);
-      noise.start(now);
-      noise.stop(now + 0.2);
-    } else if (isClap) {
-      // 4 ultra-fast staggered noise splats
-      for (let layer = 0; layer < 4; layer++) {
-        const delay = layer * 0.008;
-        const noise = rawCtx.createBufferSource();
-        noise.buffer = noiseBuf(0.15, 3.5);
-        const gain = rawCtx.createGain();
-        gain.gain.setValueAtTime(0.11 * velocity, now + delay);
-        gain.gain.exponentialRampToValueAtTime(0.001, now + delay + 0.12);
-        const bp = rawCtx.createBiquadFilter();
-        bp.type = 'bandpass';
-        bp.frequency.setValueAtTime(1500, now);
-        bp.Q.setValueAtTime(1.5, now);
-        noise.connect(bp);
-        bp.connect(gain);
-        gain.connect(dest);
-        noise.start(now + delay);
-        noise.stop(now + delay + 0.15);
-      }
-    } else if (isClosedHat) {
-      // High frequency noise burst
-      const noise = rawCtx.createBufferSource();
-      noise.buffer = noiseBuf(0.04, 10);
-      const gain = rawCtx.createGain();
-      gain.gain.setValueAtTime(0.08 * velocity, now);
-      gain.gain.exponentialRampToValueAtTime(0.001, now + 0.035);
-      const hp = rawCtx.createBiquadFilter();
-      hp.type = 'highpass';
-      hp.frequency.setValueAtTime(8000, now);
-      noise.connect(hp);
-      hp.connect(gain);
-      gain.connect(dest);
-      noise.start(now);
-      noise.stop(now + 0.06);
-    } else if (isOpenHat) {
-      const noise = rawCtx.createBufferSource();
-      noise.buffer = noiseBuf(0.3, 1.5);
-      const gain = rawCtx.createGain();
-      gain.gain.setValueAtTime(0.08 * velocity, now);
-      gain.gain.exponentialRampToValueAtTime(0.001, now + 0.25);
-      const hp = rawCtx.createBiquadFilter();
-      hp.type = 'highpass';
-      hp.frequency.setValueAtTime(7000, now);
-      noise.connect(hp);
-      hp.connect(gain);
-      gain.connect(dest);
-      noise.start(now);
-      noise.stop(now + 0.35);
-    } else if (isCrash) {
-      const noise = rawCtx.createBufferSource();
-      noise.buffer = noiseBuf(1.5, 1.2);
-      const gain = rawCtx.createGain();
-      gain.gain.setValueAtTime(0.08 * velocity, now);
-      gain.gain.exponentialRampToValueAtTime(0.001, now + 1.3);
-      const hp = rawCtx.createBiquadFilter();
-      hp.type = 'highpass';
-      hp.frequency.setValueAtTime(5000, now);
-      noise.connect(hp);
-      hp.connect(gain);
-      gain.connect(dest);
-      noise.start(now);
-      noise.stop(now + 1.5);
-    } else if (isCowbell) {
-      const osc1 = rawCtx.createOscillator();
-      const osc2 = rawCtx.createOscillator();
-      const gainNode = rawCtx.createGain();
-      
-      osc1.type = 'square';
-      osc1.frequency.setValueAtTime(540, now);
-      
-      osc2.type = 'square';
-      osc2.frequency.setValueAtTime(800, now);
-      
-      const filter = rawCtx.createBiquadFilter();
-      filter.type = 'bandpass';
-      filter.frequency.setValueAtTime(800, now);
-      filter.Q.setValueAtTime(2.2, now);
-      
-      gainNode.gain.setValueAtTime(0, now);
-      gainNode.gain.linearRampToValueAtTime(0.09 * velocity, now + 0.002);
-      gainNode.gain.exponentialRampToValueAtTime(0.001, now + 0.22);
-      
-      osc1.connect(filter);
-      osc2.connect(filter);
-      filter.connect(gainNode);
-      gainNode.connect(dest);
-      
-      osc1.start(now);
-      osc2.start(now);
-      osc1.stop(now + 0.25);
-      osc2.stop(now + 0.25);
-    } else {
-      // Default: Clean kick synthesizer
-      const body = rawCtx.createOscillator();
-      const bg = rawCtx.createGain();
-      body.type = 'sine';
-      body.frequency.setValueAtTime(140, now);
-      body.frequency.exponentialRampToValueAtTime(45, now + 0.08);
-      bg.gain.setValueAtTime(0.22 * velocity, now);
-      bg.gain.exponentialRampToValueAtTime(0.001, now + 0.3);
-      body.connect(bg);
-      bg.connect(dest);
-      body.start(now);
-      body.stop(now + 0.32);
-    }
+    renderReferenceDrumAt(rawCtx, dest, mapDrumNoteToType(noteName), now, velocity);
   } catch (err) {
     console.warn('Low-latency drum error:', err);
   }
