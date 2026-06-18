@@ -614,12 +614,12 @@ class AudioEngine {
     // -6 dB padding provides perfect high-precision summing headroom in modern 32-bit float audio engines
     this.masterHeadroom = new Tone.Volume(initialVolume - 6);
     
-    // Gentle glue compression to match the cleaner offline render character.
+    // Transparent glue compression — barely touches peaks, never audibly pumps.
     this.masterCompressor = new Tone.Compressor({
-      threshold: -12,
-      ratio: 3,
-      attack: 0.004,
-      release: 0.18
+      threshold: -6,
+      ratio: 1.5,
+      attack: 0.02,
+      release: 0.25
     });
 
     // Keep a small safety trim in real-time to avoid speaker-tear artifacts on mobile.
@@ -669,13 +669,13 @@ class AudioEngine {
     }
     try {
       this.micStream = await navigator.mediaDevices.getUserMedia({
-         audio: {
-            deviceId: deviceId ? { exact: deviceId } : undefined,
-            echoCancellation: true,
-            noiseSuppression: false,
-            autoGainControl: true
-         }
-      });
+           audio: {
+              deviceId: deviceId ? { exact: deviceId } : undefined,
+              echoCancellation: false,
+              noiseSuppression: false,
+              autoGainControl: false
+           }
+        });
 
       if (!this.vocalPipeline) {
         this.vocalPipeline = new VocalPipeline();
@@ -845,8 +845,9 @@ class AudioEngine {
       await Tone.start();
       console.log("Audio Engine Started");
 
-      // Keep the live engine responsive without over-buffering.
-      Tone.getContext().lookAhead = 0.05;
+      // 100ms lookahead: enough buffer to prevent scheduling underruns on mobile
+      // without introducing perceptible latency at normal BPMs.
+      Tone.getContext().lookAhead = 0.1;
 
       try {
         await preloadOfflineDrums();
@@ -1079,24 +1080,24 @@ class AudioEngine {
 
         try {
           const stream = await navigator.mediaDevices.getUserMedia({
-            audio: targetDeviceId === "default"
-              ? {
-                  echoCancellation: true,
-                  noiseSuppression: false,
-                  autoGainControl: true
-                }
-              : {
-                  deviceId: { exact: targetDeviceId },
-                  echoCancellation: true,
-                  noiseSuppression: false,
-                  autoGainControl: true
-                }
-          });
+              audio: targetDeviceId === "default"
+                ? {
+                    echoCancellation: false,
+                    noiseSuppression: false,
+                    autoGainControl: false
+                  }
+                : {
+                    deviceId: { exact: targetDeviceId },
+                    echoCancellation: false,
+                    noiseSuppression: false,
+                    autoGainControl: false
+                  }
+            });
           
           ctx.micStream = stream;
           (ctx as any).currentDeviceId = targetDeviceId;
           
-          ctx.inputGain = new Tone.Gain(2.5); // Healthy preamp gain boost to lift quiet consumer microphone signals
+          ctx.inputGain = new Tone.Gain(1.0); // Unity gain — let user control level via track fader
           ctx.micNode = new Tone.Gain(1);
           
           const rawContext = Tone.getContext().rawContext as any;

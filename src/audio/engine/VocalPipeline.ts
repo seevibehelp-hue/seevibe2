@@ -108,61 +108,103 @@ class AutotuneProcessor extends AudioWorkletProcessor {
   constructor(options) {
     super();
     this.sampleRate = options.processorOptions?.sampleRate || 48000;
-    this.pitchShiftingRatio = 1.0;
+    this.ratio = 1.0;
     this.targetRatio = 1.0;
 
-    // Granular synthesis state
-    this.grainSize = 512;
-    this.overlap = 0.5;
-    this.buffer = new Float32Array(this.sampleRate * 2); // 2 seconds
+    // 80ms circular input buffer — large enough for stable grain reads
+    this.bufLen = Math.ceil(this.sampleRate * 0.08);
+    this.buf = new Float32Array(this.bufLen);
     this.writePos = 0;
-    this.readPos = 0;
-    
+
+    // Two overlapping grain readers for artifact-free crossfading
+    this.grainSize = 512;
+    this.halfGrain = 256;
+    this.phase = 0;
+    this.readA = 0;
+    this.readB = 0;
+    this.needsInit = true;
+
     this.port.onmessage = (e) => {
       if (e.data.type === 'setPitchParam') {
-         this.targetRatio = Math.pow(2, e.data.cents / 1200);
+        this.targetRatio = Math.pow(2, e.data.cents / 1200);
       }
     };
   }
 
-  process(inputs, outputs, parameters) {
-    const input = inputs[0];
-    const output = outputs[0];
+  process(inputs, outputs) {
+    const inp = inputs[0];
+    const out = outputs[0];
+    if (!inp || !inp[0] || !out || !out[0]) return true;
 
-    if (!input || !input[0] || !output || !output[0]) return true;
+    const src = inp[0];
+    const dst = out[0];
+    const bufLen = this.bufLen;
 
-    const channelIn = input[0];
-    const channelOut = output[0];
+    // Gentle ratio smoothing — avoids sudden pitch jumps
+    this.ratio += (this.targetRatio - this.ratio) * 0.02;
+    const ratio = this.ratio;
+    const fixedDelay = Math.round(this.sampleRate * 0.04); // 40ms fixed latency
 
-    // Smooth ratio transition
-    this.pitchShiftingRatio += (this.targetRatio - this.pitchShiftingRatio) * 0.05;
+    for (let i = 0; i < src.length; i++) {
+      // Write input to circular buffer
+      this.buf[this.writePos] = src[i];
+      this.writePos = (this.writePos + 1) % bufLen;
 
-    for (let i = 0; i < channelIn.length; i++) {
-       // Write to circular buffer
-       this.buffer[this.writePos] = channelIn[i];
-       
-       // Calculate read position with pitch shift factor
-       let readIdx = Math.floor(this.readPos);
-       let frac = this.readPos - readIdx;
-       
-       // Linear interpolation
-       let val1 = this.buffer[readIdx % this.buffer.length];
-       let val2 = this.buffer[(readIdx + 1) % this.buffer.length];
-       let outVal = val1 + frac * (val2 - val1);
-       
-       channelOut[i] = outVal;
+      if (Math.abs(ratio - 1.0) < 0.001) {
+        // Clean pass-through: fixed 40ms delay, zero pitch processing
+        const r = (this.writePos - fixedDelay + bufLen) % bufLen;
+        dst[i] = this.buf[r];
+        // Keep grain readers aligned so switching into pitch mode is seamless
+        this.readA = r;
+        this.readB = (r + this.halfGrain) % bufLen;
+        this.phase = 0;
+        this.needsInit = true;
+        continue;
+      }
 
-       this.writePos = (this.writePos + 1) % this.buffer.length;
-       this.readPos = (this.readPos + this.pitchShiftingRatio);
+      // Initialise grain readers on first pitch-active sample
+      if (this.needsInit) {
+        this.readA = (this.writePos - fixedDelay + bufLen) % bufLen;
+        this.readB = (this.readA + this.halfGrain) % bufLen;
+        this.phase = 0;
+        this.needsInit = false;
+      }
 
-       // Keep readPos constrained closely to writePos to minimize latency
-       let diff = this.writePos - this.readPos;
-       if (diff < 0) diff += this.buffer.length;
-       
-       if (diff > this.sampleRate * 0.1 || diff < this.sampleRate * 0.02) {
-          this.readPos = this.writePos - (this.sampleRate * 0.05);
-          if (this.readPos < 0) this.readPos += this.buffer.length;
-       }
+      // Hanning-windowed crossfade between grain A (fading out) and grain B (fading in)
+      const t = this.phase / this.grainSize;
+      const winA = 0.5 * (1.0 - Math.cos(6.28318 * (1.0 - t)));
+      const winB = 0.5 * (1.0 - Math.cos(6.28318 * t));
+
+      // Linear-interpolated reads from each grain
+      const ra = Math.floor(this.readA) % bufLen;
+      const fa = this.readA - Math.floor(this.readA);
+      const vA = this.buf[ra] + fa * (this.buf[(ra + 1) % bufLen] - this.buf[ra]);
+
+      const rb = Math.floor(this.readB) % bufLen;
+      const fb = this.readB - Math.floor(this.readB);
+      const vB = this.buf[rb] + fb * (this.buf[(rb + 1) % bufLen] - this.buf[rb]);
+
+      dst[i] = vA * winA + vB * winB;
+
+      // Advance grain readers at pitch ratio
+      this.readA = (this.readA + ratio) % bufLen;
+      this.readB = (this.readB + ratio) % bufLen;
+
+      // Advance grain phase; when one grain ends, swap readers
+      this.phase++;
+      if (this.phase >= this.grainSize) {
+        this.phase = 0;
+        this.readA = this.readB;
+        this.readB = (this.readB + this.halfGrain) % bufLen;
+      }
+
+      // Soft drift correction — nudge gradually instead of hard reset (eliminates cricket clicks)
+      const delay = (this.writePos - Math.floor(this.readA) + bufLen) % bufLen;
+      if (delay > fixedDelay * 2.5 || delay < fixedDelay * 0.4) {
+        const correction = (delay - fixedDelay) * 0.001;
+        this.readA = ((this.readA - correction) % bufLen + bufLen) % bufLen;
+        this.readB = (this.readA + this.halfGrain) % bufLen;
+      }
     }
 
     return true;
@@ -199,8 +241,16 @@ export class VocalPipeline {
   private allowedMidiNotes: number[] = [];
 
   constructor() {
-    const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
-    this.nativeContext = new AudioCtx({ sampleRate: 48000 });
+    // Use the same AudioContext as Tone.js to avoid cross-context resampling glitches.
+    // Tone's rawContext is available as soon as the module loads.
+    const toneRaw = (Tone.getContext().rawContext as AudioContext);
+    // If Tone's context exists and is usable, share it; otherwise create a minimal fallback.
+    if (toneRaw && toneRaw.createMediaStreamDestination) {
+      this.nativeContext = toneRaw;
+    } else {
+      const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
+      this.nativeContext = new AudioCtx();
+    }
     this.outputDest = this.nativeContext.createMediaStreamDestination();
     this.outputStream = this.outputDest.stream;
     
