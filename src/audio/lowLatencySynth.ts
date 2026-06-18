@@ -27,24 +27,45 @@ const DRUM_NOTE_TO_TYPE: Record<string, string> = {
 
 const referenceMasterGain = 0.85;
 
-// Audition path intentionally bypasses the Tone master chain (see getDestinationNode)
-
 const activeVoices = new Map<string, { osc1: OscillatorNode; osc2?: OscillatorNode; env: GainNode }>();
 
-// Audition path (drum pads + keyboard pre-recording hits) bypasses the shared
-// Tone master compressor/limiter so transient drum layers cannot slam the
-// master chain and color subsequent timeline playback. We route through a
-// single shared audition gain straight to the device output, matching the
-// clean playback path used by the reference mobile-music-pro engine.
+// Noise buffer cache — create once per (duration, decay, sampleRate) combo, reuse forever.
+// Recreating AudioBuffers on every drum hit causes GC pressure that stalls the audio thread.
+const noiseBufferCache = new Map<string, AudioBuffer>();
+const getCachedNoiseBuf = (ctx: BaseAudioContext, duration: number, decay: number): AudioBuffer => {
+  const key = `${duration}|${decay}|${ctx.sampleRate}`;
+  if (noiseBufferCache.has(key)) return noiseBufferCache.get(key)!;
+  const size = Math.ceil(ctx.sampleRate * duration);
+  const b = ctx.createBuffer(1, size, ctx.sampleRate);
+  const d = b.getChannelData(0);
+  for (let i = 0; i < size; i++) {
+    d[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / size, decay);
+  }
+  noiseBufferCache.set(key, b);
+  return b;
+};
+
+// Audition bus: shared gain → hard limiter → output.
+// Limiter prevents clipping when multiple pads are hit rapidly (polyphonic sum).
 let auditionBus: GainNode | null = null;
+let auditionLimiter: DynamicsCompressorNode | null = null;
 let auditionBusCtx: AudioContext | null = null;
 
 const getDestinationNode = (rawCtx: AudioContext): AudioNode => {
   try {
     if (!auditionBus || auditionBusCtx !== rawCtx) {
+      // Hard limiter — transparent at normal levels, prevents inter-voice clipping
+      auditionLimiter = rawCtx.createDynamicsCompressor();
+      auditionLimiter.threshold.value = -3;
+      auditionLimiter.knee.value = 2;
+      auditionLimiter.ratio.value = 20;
+      auditionLimiter.attack.value = 0.001;
+      auditionLimiter.release.value = 0.05;
+      auditionLimiter.connect(rawCtx.destination);
+
       auditionBus = rawCtx.createGain();
       auditionBus.gain.value = referenceMasterGain;
-      auditionBus.connect(rawCtx.destination);
+      auditionBus.connect(auditionLimiter);
       auditionBusCtx = rawCtx;
     }
     return auditionBus;
@@ -159,14 +180,24 @@ export const stopLowLatencySynth = (noteName: string, synthType: string = 'poly'
     
     const now = rawCtx.currentTime;
     const release = 0.18;
-    
-    v.env.gain.cancelScheduledValues(now);
-    v.env.gain.setValueAtTime(v.env.gain.value, now);
+
+    // cancelAndHoldAtTime holds the gain at its *computed* value at `now` (including
+    // any in-progress ramp), then clears future events. This eliminates the pop that
+    // occurs when cancelScheduledValues drops back to the last setValueAtTime (often 0)
+    // before the release ramp begins.
+    if (typeof v.env.gain.cancelAndHoldAtTime === 'function') {
+      v.env.gain.cancelAndHoldAtTime(now);
+    } else {
+      // Fallback for older browsers: snapshot current value manually
+      const snapshot = Math.max(0.0001, v.env.gain.value);
+      v.env.gain.cancelScheduledValues(now);
+      v.env.gain.setValueAtTime(snapshot, now);
+    }
     v.env.gain.linearRampToValueAtTime(0, now + release);
-    
-    v.osc1.stop(now + release + 0.02);
+
+    v.osc1.stop(now + release + 0.05);
     if (v.osc2) {
-      v.osc2.stop(now + release + 0.02);
+      v.osc2.stop(now + release + 0.05);
     }
     activeVoices.delete(voiceId);
   } catch (err) {
@@ -208,15 +239,8 @@ export const renderReferenceDrumAt = (
 ) => {
   const drumType = (drumTypeRaw || '').toLowerCase();
   const destination = ((dest as any)?.input || dest) as AudioNode;
-  const noiseBuf = (duration: number, decay: number) => {
-    const size = Math.ceil(ctx.sampleRate * duration);
-    const b = ctx.createBuffer(1, size, ctx.sampleRate);
-    const d = b.getChannelData(0);
-    for (let i = 0; i < size; i++) {
-      d[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / size, decay);
-    }
-    return b;
-  };
+  // Use shared cache — avoids allocating a new AudioBuffer on every hit (main GC-glitch source)
+  const noiseBuf = (duration: number, decay: number) => getCachedNoiseBuf(ctx, duration, decay);
 
   if (drumType === 'kick' || drumType === 'boom') {
     const body = ctx.createOscillator(); const bg = ctx.createGain();
