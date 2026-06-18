@@ -1870,12 +1870,18 @@ class AudioEngine {
       ctx.compressor.ratio.value = track.fx?.compressor?.enabled
         ? (track.fx.compressor.ratio ?? 12)
         : 1;
+      ctx.compressor.attack.value = track.fx?.compressor?.enabled
+        ? (track.fx.compressor.attack ?? 0.003)
+        : 0.003;
+      ctx.compressor.release.value = track.fx?.compressor?.enabled
+        ? (track.fx.compressor.release ?? 0.25)
+        : 0.25;
       ctx.pitchShift.pitch = track.fx?.pitchShift?.enabled
         ? (track.fx.pitchShift.pitch ?? 0)
         : 0;
       ctx.pitchShift.wet.value = track.fx?.pitchShift?.enabled ? 1 : 0;
 
-      ctx.chorus.depth = track.fx?.chorus?.depth ?? 0.5;
+      ctx.chorus.depth.value = track.fx?.chorus?.depth ?? 0.5;
       ctx.chorus.frequency.value = track.fx?.chorus?.frequency ?? 1.5;
       ctx.chorus.delayTime = track.fx?.chorus?.delayTime ?? 2.5;
       ctx.chorus.wet.value = track.fx?.chorus?.enabled
@@ -1885,9 +1891,17 @@ class AudioEngine {
       ctx.delay.wet.value = track.fx?.delay?.enabled
         ? (track.fx.delay.mix ?? 0.2)
         : 0;
+      if (track.fx?.delay) {
+        ctx.delay.feedback.value = Math.min(0.95, track.fx.delay.feedback ?? 0.3);
+        try { ctx.delay.delayTime.value = track.fx.delay.time ?? '8n'; } catch (_) {}
+      }
       ctx.reverb.wet.value = track.fx?.reverb?.enabled
         ? (track.fx.reverb.mix ?? 0.3)
         : 0;
+      // Sync roomSize from decay slider (0.1–10s → 0.01–0.98 normalised)
+      if (track.fx?.reverb) {
+        ctx.reverb.roomSize.value = Math.min(0.98, (track.fx.reverb.decay ?? 1.5) / 10.2);
+      }
 
       // Update Graphic EQ
       if (ctx.graphicEQFilters && track.fx?.graphicEQ) {
@@ -1933,15 +1947,16 @@ class AudioEngine {
         ctx.distortion.wet.value = track.fx.distortion.enabled ? (track.fx.distortion.wet ?? 0.5) : 0;
       }
 
-      // Update Bitcrusher
+      // Update Bitcrusher — bits is a plain number property in Tone.js v15
       if (ctx.bitcrusher && track.fx?.bitcrusher) {
         ctx.bitcrusher.wet.value = track.fx.bitcrusher.enabled ? (track.fx.bitcrusher.wet ?? 0.5) : 0;
+        ctx.bitcrusher.bits = track.fx.bitcrusher.bits ?? 8;
       }
 
-      // Update Phaser (Q feedback adjusts resonance depth similarly)
+      // Update Phaser — octaves controls sweep depth (Tone.Phaser has no .Q)
       if (ctx.phaser && track.fx?.phaser) {
         ctx.phaser.frequency.value = track.fx.phaser.frequency ?? 1.5;
-        ctx.phaser.Q.value = (track.fx.phaser.depth ?? 0.5) * 10;
+        ctx.phaser.octaves = (track.fx.phaser.depth ?? 0.5) * 6;
         ctx.phaser.wet.value = track.fx.phaser.enabled ? (track.fx.phaser.wet ?? 0.5) : 0;
       }
 

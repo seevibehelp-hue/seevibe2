@@ -1121,6 +1121,20 @@ export function FXRack() {
                 </div>
                 <input type="range" min="1" max="20" value={fx.compressor?.ratio ?? 12} onChange={(e) => updateFX('compressor', { ratio: Number(e.target.value) })} className="w-full h-1 bg-[#222] rounded-lg appearance-none cursor-pointer" />
               </div>
+              <div className="grid grid-cols-2 gap-2">
+                <div>
+                  <div className="flex justify-between text-[10px] text-gray-500 font-mono mb-1">
+                    <span>ATTACK</span><span>{((fx.compressor?.attack ?? 0.003) * 1000).toFixed(1)}ms</span>
+                  </div>
+                  <input type="range" min="0.001" max="0.2" step="0.001" value={fx.compressor?.attack ?? 0.003} onChange={(e) => updateFX('compressor', { attack: Number(e.target.value) })} className="w-full h-1 bg-[#222] rounded-lg appearance-none cursor-pointer" />
+                </div>
+                <div>
+                  <div className="flex justify-between text-[10px] text-gray-500 font-mono mb-1">
+                    <span>RELEASE</span><span>{Math.round((fx.compressor?.release ?? 0.25) * 1000)}ms</span>
+                  </div>
+                  <input type="range" min="0.01" max="1.0" step="0.01" value={fx.compressor?.release ?? 0.25} onChange={(e) => updateFX('compressor', { release: Number(e.target.value) })} className="w-full h-1 bg-[#222] rounded-lg appearance-none cursor-pointer" />
+                </div>
+              </div>
             </div>
           </div>
         )}
@@ -1188,13 +1202,21 @@ export function FXRack() {
               <div className="flex justify-between gap-2 mb-2">
                 <div className="flex-1">
                   <span className="text-[10px] text-gray-500 font-mono block mb-1">KEY</span>
-                  <select className="w-full bg-[#1e1e1e] text-white text-[10px] p-1 rounded outline-none border border-neutral-800">
+                  <select
+                    value={fx.pitchShift?.key ?? 'C'}
+                    onChange={(e) => updateFX('pitchShift', { key: e.target.value })}
+                    className="w-full bg-[#1e1e1e] text-white text-[10px] p-1 rounded outline-none border border-neutral-800"
+                  >
                     {['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'].map(k => <option key={k} value={k}>{k}</option>)}
                   </select>
                 </div>
                 <div className="flex-1">
                   <span className="text-[10px] text-gray-500 font-mono block mb-1">SCALE</span>
-                  <select className="w-full bg-[#1e1e1e] text-white text-[10px] p-1 rounded outline-none border border-neutral-800">
+                  <select
+                    value={fx.pitchShift?.scale ?? 'chromatic'}
+                    onChange={(e) => updateFX('pitchShift', { scale: e.target.value })}
+                    className="w-full bg-[#1e1e1e] text-white text-[10px] p-1 rounded outline-none border border-neutral-800"
+                  >
                     <option value="major">Major</option>
                     <option value="minor">Minor</option>
                     <option value="chromatic">Chromatic</option>
@@ -1662,6 +1684,21 @@ export function FXRack() {
               </button>
             </div>
             <div className="space-y-4">
+              <div>
+                <div className="flex justify-between text-[10px] text-gray-500 font-mono mb-1">
+                  <span>TIME</span>
+                </div>
+                <select
+                  value={fx.delay?.time ?? '8n'}
+                  onChange={(e) => updateFX('delay', { time: e.target.value })}
+                  className="w-full bg-[#222] text-xs text-white p-1 rounded border border-[#333] outline-none"
+                >
+                  <option value="2n">Half Note (2n)</option>
+                  <option value="4n">Quarter Note (4n)</option>
+                  <option value="8n">Eighth Note (8n)</option>
+                  <option value="16n">Sixteenth Note (16n)</option>
+                </select>
+              </div>
               <div>
                 <div className="flex justify-between text-[10px] text-gray-500 font-mono mb-1">
                   <span>MIX</span><span>{Math.round((fx.delay?.mix ?? 0.2) * 100)}%</span>
