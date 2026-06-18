@@ -14,16 +14,17 @@ export function AudioEngineSelectorModal({ isOpen, onClose }: AudioEngineSelecto
 
   if (!isOpen) return null;
 
-  const handleSelectMode = (mode: 'web' | 'native') => {
+  const handleSelectMode = async (mode: 'web' | 'native') => {
     setGlobalEffectsMode(mode);
     
     // Play sweet tone feedback to confirm the audio context switch
     try {
       if (Tone.context.state !== 'running') {
-        Tone.start();
+        await Tone.start().catch(() => {});
       }
       const synth = new Tone.Synth().toDestination();
       synth.triggerAttackRelease(mode === 'native' ? "G4" : "C4", "8n");
+      setTimeout(() => { try { synth.dispose(); } catch {} }, 800);
     } catch (e) {
       console.warn("Could not play engine audio feedback:", e);
     }

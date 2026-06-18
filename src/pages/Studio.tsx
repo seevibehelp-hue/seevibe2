@@ -196,20 +196,20 @@ export default function StudioShell() {
   };
 
   useEffect(() => {
-    const initAudioOnFirstInteraction = () => {
-      try {
-        Tone.start();
-        const rawCtx = Tone.getContext().rawContext as AudioContext;
-        if (rawCtx) {
-          rawCtx.resume().catch(() => {});
-        }
-      } catch (e) {}
-      audioEngine.init();
-      window.removeEventListener('click', initAudioOnFirstInteraction);
-      window.removeEventListener('keydown', initAudioOnFirstInteraction);
-      window.removeEventListener('touchstart', initAudioOnFirstInteraction);
-      window.removeEventListener('pointerdown', initAudioOnFirstInteraction);
-    };
+    const initAudioOnFirstInteraction = async () => {
+       try {
+         await Tone.start();
+         const rawCtx = Tone.getContext().rawContext as AudioContext;
+         if (rawCtx) {
+           rawCtx.resume().catch(() => {});
+         }
+       } catch (e) {}
+       audioEngine.init();
+       window.removeEventListener('click', initAudioOnFirstInteraction);
+       window.removeEventListener('keydown', initAudioOnFirstInteraction);
+       window.removeEventListener('touchstart', initAudioOnFirstInteraction);
+       window.removeEventListener('pointerdown', initAudioOnFirstInteraction);
+     };
     
     window.addEventListener('click', initAudioOnFirstInteraction);
     window.addEventListener('keydown', initAudioOnFirstInteraction);

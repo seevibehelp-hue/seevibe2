@@ -135,6 +135,7 @@ export function FloatingAIOrientedBall() {
     try {
       const synth = new Tone.Synth().toDestination();
       synth.triggerAttackRelease("E5", "8n");
+      setTimeout(() => { try { synth.dispose(); } catch {} }, 800);
     } catch {}
 
     // Dynamic automation scripts based on application type
@@ -311,6 +312,7 @@ export function FloatingAIOrientedBall() {
       try {
         const synth = new Tone.Synth().toDestination();
         synth.triggerAttackRelease("A4", "32n");
+        setTimeout(() => { try { synth.dispose(); } catch {} }, 400);
       } catch {}
 
     }, 850);

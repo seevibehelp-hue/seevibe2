@@ -800,10 +800,12 @@ export function VocalRoll() {
 
   const playCleanFeedbackTone = async (note: string | string[], duration: string = "8n") => {
     await audioEngine.init().catch(() => {});
-    if (Tone.context.state !== 'running') Tone.start();
+    if (Tone.context.state !== 'running') await Tone.start().catch(() => {});
     const synth = new Tone.PolySynth(Tone.Synth, { volume: -18 }).connect(audioEngine.masterHeadroom || Tone.Destination);
     synth.triggerAttackRelease(note, duration);
-    setTimeout(() => synth.dispose(), 1200);
+    // Wait for full release before disposing — 1200ms is tight if duration > "8n"
+    const releaseMs = 1500;
+    setTimeout(() => { try { synth.dispose(); } catch {} }, releaseMs);
   };
 
   const handleToggleVocalDspMode = async (mode: 'web' | 'native') => {
@@ -816,7 +818,7 @@ export function VocalRoll() {
 
     if (track.effectsMode === 'native' || track.unlockedNativePremium) {
       updateTrack(track.id, { effectsMode: 'native' });
-      if (Tone.context.state !== 'running') Tone.start();
+      if (Tone.context.state !== 'running') await Tone.start().catch(() => {});
       dispatchNativeEffectCommand(track.id, 'pitchCorrection', { ...track.fx.pitchCorrection, mode: 'native_vocal_tune' });
       playCleanFeedbackTone("G4");
       return;
@@ -1750,8 +1752,8 @@ export function VocalRoll() {
         <div className="flex items-center gap-2 shrink-0">
           {/* Play CTA */}
           <button 
-            onClick={() => {
-              if (Tone.context.state !== 'running') Tone.start();
+            onClick={async () => {
+              if (Tone.context.state !== 'running') await Tone.start().catch(() => {});
               setPlaybackState(playbackState === 'playing' ? 'paused' : 'playing');
             }}
             className={`h-9 w-9 rounded-md flex items-center justify-center border transition-all cursor-pointer ${playbackState === 'playing' ? 'bg-[#00FF9C]/15 border-[#00FF9C] text-[#00FF9C] shadow-[0_0_8px_rgba(0,255,156,0.2)]' : 'bg-neutral-900 border-neutral-800 text-neutral-400 hover:text-white'}`}
