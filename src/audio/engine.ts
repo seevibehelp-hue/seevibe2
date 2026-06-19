@@ -9,7 +9,50 @@ import JSZip from "jszip";
 
 const globalBufferCache = new Map<string, Tone.ToneAudioBuffer>();
 
-const wavWorkerCode = `
+// ---------------------------------------------------------------------------
+// Shared PCM encoder — used by both the Worker string and the synchronous
+// fallback so the conversion logic only ever lives in one place.
+// NOTE: The function body is also embedded verbatim in wavWorkerCode below
+// (Workers can't import modules) — keep the two in sync.
+// ---------------------------------------------------------------------------
+function encodeInt16PCM(
+  view: DataView,
+  channelData: Float32Array[],
+  numChannels: number,
+  length: number,
+  startPos: number
+): void {
+  let pos = startPos;
+  for (let i = 0; i < length; i++) {
+    for (let ch = 0; ch < numChannels; ch++) {
+      const arr = channelData[ch];
+      const raw = arr && i < arr.length ? arr[i] : 0;
+      let s = Math.max(-1, Math.min(1, raw));
+      s = s < 0 ? s * 0x8000 : s * 0x7fff;
+      view.setInt16(pos, s, true);
+      pos += 2;
+    }
+  }
+}
+
+// encodeInt16PCM body embedded for Worker scope (Workers cannot import modules).
+const _encodeInt16PCMSrc = `
+function encodeInt16PCM(view, channelData, numChannels, length, startPos) {
+  let pos = startPos;
+  for (let i = 0; i < length; i++) {
+    for (let ch = 0; ch < numChannels; ch++) {
+      const arr = channelData[ch];
+      const raw = arr && i < arr.length ? arr[i] : 0;
+      let s = Math.max(-1, Math.min(1, raw));
+      s = s < 0 ? s * 0x8000 : s * 0x7fff;
+      view.setInt16(pos, s, true);
+      pos += 2;
+    }
+  }
+}
+`;
+
+const wavWorkerCode = _encodeInt16PCMSrc + `
 self.onmessage = function(e) {
   const { channelData, sampleRate, numChannels, length, bitDepth = 16 } = e.data;
   const bytesPerSample = bitDepth / 8;
@@ -40,30 +83,9 @@ self.onmessage = function(e) {
   writeString(view, 36, "data");
   view.setUint32(40, length * blockAlign, true);
   
-  const offset = 44;
-  let pos = offset;
-  
-  // Track chunk reporting step
-  const totalFrames = length;
-  const updateChunk = Math.max(10000, Math.floor(totalFrames / 40)); // Report progress more frequently (every 2.5%)
-  
-  for (let i = 0; i < totalFrames; i++) {
-    if (i % updateChunk === 0) {
-      const completionPercent = Math.min(99, Math.round(95 + (i / totalFrames) * 4));
-      self.postMessage({ type: 'progress', progress: completionPercent });
-    }
-    
-    for (let channel = 0; channel < numChannels; channel++) {
-      const channelArray = channelData[channel];
-      const val = (channelArray && i < channelArray.length) ? channelArray[i] : 0;
-      let sample = Math.max(-1, Math.min(1, val));
-      // Convert to 16-bit PCM
-      sample = sample < 0 ? sample * 0x8000 : sample * 0x7fff;
-      view.setInt16(pos, sample, true);
-      pos += 2;
-    }
-  }
-  
+  // Delegate PCM conversion to the shared encodeInt16PCM helper (defined above).
+  encodeInt16PCM(view, channelData, numChannels, length, 44);
+  self.postMessage({ type: 'progress', progress: 99 });
   self.postMessage({ type: 'done', wavBuffer: wavBuffer }, [wavBuffer]);
 };
 `;
@@ -129,37 +151,27 @@ function encodeWavInWorker(audioBuffer: any, onProgress: (p: number) => void): P
         writeString(view, 36, "data");
         view.setUint32(40, length * blockAlign, true);
         
-        const offset = 44;
-        let pos = offset;
         const totalFrames = length;
-        const updateChunk = Math.max(1000, Math.floor(totalFrames / 40));
-        
+        const batchSize = Math.max(40000, Math.floor(totalFrames / 15));
         let i = 0;
+
         function processBatch() {
           const state = useDawStore.getState();
           if (state.isExportCancelled) {
             reject(new Error("Export aborted by user"));
             return;
           }
-          
-          const batchSize = Math.max(40000, Math.floor(totalFrames / 15));
+
           const end = Math.min(totalFrames, i + batchSize);
-          
-          for (; i < end; i++) {
-            if (i % updateChunk === 0) {
-              const completionPercent = Math.min(99, Math.round(95 + (i / totalFrames) * 4));
-              onProgress(completionPercent);
-            }
-            
-            for (let channel = 0; channel < numChannels; channel++) {
-              const channelArray = channelData[channel];
-              const val = (channelArray && i < channelArray.length) ? channelArray[i] : 0;
-              let sample = Math.max(-1, Math.min(1, val));
-              sample = sample < 0 ? sample * 0x8000 : sample * 0x7fff;
-              view.setInt16(pos, sample, true);
-              pos += 2;
-            }
-          }
+          // Delegate to shared PCM encoder for this batch slice.
+          // We create a temporary slice view so encodeInt16PCM writes only
+          // the frames [i, end) at the correct DataView offset.
+          const sliceChannels = channelData.map((ch: Float32Array) => ch.slice(i, end));
+          encodeInt16PCM(view, sliceChannels, numChannels, end - i, 44 + i * numChannels * 2);
+          i = end;
+
+          const completionPercent = Math.min(99, Math.round(95 + (i / totalFrames) * 4));
+          onProgress(completionPercent);
           
           if (i < totalFrames) {
             setTimeout(processBatch, 0);
@@ -443,6 +455,27 @@ class AudioEngine {
   private trackContexts: Map<string, TrackContext> = new Map();
   private parts: Map<string, Tone.Part> = new Map();
   private clipPitchShifts: Map<string, Tone.PitchShift> = new Map();
+
+  // WakeLock sentinel — kept alive while recording or playing so the screen
+  // does not sleep mid-session and drop audio.
+  private _wakeLock: WakeLockSentinel | null = null;
+
+  private async _acquireWakeLock() {
+    if (this._wakeLock) return; // already held
+    try {
+      if (typeof navigator !== 'undefined' && 'wakeLock' in navigator) {
+        this._wakeLock = await (navigator as any).wakeLock.request('screen');
+        this._wakeLock?.addEventListener('release', () => {
+          this._wakeLock = null;
+        });
+      }
+    } catch (_) {}
+  }
+
+  private _releaseWakeLock() {
+    try { this._wakeLock?.release(); } catch (_) {}
+    this._wakeLock = null;
+  }
   private audioBufferCache: Map<string, Tone.ToneAudioBuffer> = new Map();
 
   public vocalPipeline: VocalPipeline | null = null;
@@ -1279,6 +1312,12 @@ class AudioEngine {
 
   private setupStoreSubscription() {
     this.unsubscribe = useDawStore.subscribe((state, prevState) => {
+      // WakeLock: acquire while playing or recording, release when idle.
+      const isActive = state.playbackState === 'playing' || state.isRecording;
+      const wasActive = prevState.playbackState === 'playing' || prevState.isRecording;
+      if (isActive && !wasActive) this._acquireWakeLock();
+      if (!isActive && wasActive) this._releaseWakeLock();
+
       // Handle Master Volume changes
       if (state.masterVolume !== prevState.masterVolume) {
         // rampTo avoids the click/zipper artifact on live master-fader moves
@@ -1689,12 +1728,15 @@ class AudioEngine {
       this.metronomePart = null;
     }
 
-    // Only rebuild tracks and context if tracks or clips or bpm changed
+    // Only rebuild tracks and context if tracks, clips, bpm, or recording state changed.
+    // isRecording must be included: when recording stops the loopEnd reset lives
+    // below this guard, and skipping it would leave loopEnd stuck at "9999m".
     if (
       prevState &&
       state.tracks === prevState.tracks &&
       state.clips === prevState.clips &&
-      state.bpm === prevState.bpm
+      state.bpm === prevState.bpm &&
+      state.isRecording === prevState.isRecording
     ) {
       return;
     }
@@ -3238,6 +3280,7 @@ class AudioEngine {
 
   destroy() {
     if (this.unsubscribe) this.unsubscribe();
+    this._releaseWakeLock();
     this.micNode?.dispose();
     this.recorder.dispose();
     this.micChannel.dispose();

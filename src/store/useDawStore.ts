@@ -428,10 +428,16 @@ export const useDawStore = create<DawState>()(
     const track = state.tracks.find(t => t.id === id);
     let newClips = { ...state.clips };
     if (track) {
+      // Primary sweep: remove clips listed in track.clips[]
       track.clips.forEach(clipId => {
         delete newClips[clipId];
       });
     }
+    // Orphan sweep: also remove any clip whose trackId points to this track —
+    // catches clips that drifted out of sync with track.clips[] (dual-index guard).
+    Object.entries(newClips).forEach(([clipId, clip]) => {
+      if (clip.trackId === id) delete newClips[clipId];
+    });
     // Clear groupId for tracks routed to this group track
     const updatedTracks = state.tracks
       .filter(t => t.id !== id)
@@ -898,3 +904,36 @@ export const useDawStore = create<DawState>()(
     }
   )
 );
+
+// ---------------------------------------------------------------------------
+// Derived selectors
+// ---------------------------------------------------------------------------
+
+/**
+ * Returns all clips that belong to a given track, sourcing truth from the
+ * clips map (not track.clips[]) to avoid orphan/stale-id mismatches.
+ * Always prefer this over `track.clips.map(id => state.clips[id])`.
+ */
+export function selectTrackClips(
+  state: ReturnType<typeof useDawStore.getState>,
+  trackId: string
+) {
+  return Object.values(state.clips).filter((c) => c.trackId === trackId);
+}
+
+/**
+ * Scans the entire clips map for clips whose trackId references a track that
+ * no longer exists, and removes them.  Call after any bulk track deletion.
+ */
+export function pruneOrphanClips() {
+  useDawStore.setState((state: any) => {
+    const trackIds = new Set(state.tracks.map((t: any) => t.id));
+    const pruned = Object.fromEntries(
+      Object.entries(state.clips as Record<string, any>).filter(([, clip]: [string, any]) =>
+        trackIds.has(clip.trackId)
+      )
+    );
+    if (Object.keys(pruned).length === Object.keys(state.clips).length) return state;
+    return { clips: pruned };
+  });
+}

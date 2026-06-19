@@ -9,6 +9,9 @@ class PitchProcessor extends AudioWorkletProcessor {
     this.bufferIndex = 0;
     this.sampleRate = options.processorOptions?.sampleRate || 48000;
     this.threshold = 0.1;
+    // Pre-allocate the YIN difference buffer (halfBufferSize = bufferSize/2).
+    // Reusing this across calls avoids GC pressure on the audio thread.
+    this._yinBuffer = new Float32Array(1024);
   }
 
   process(inputs, outputs, parameters) {
@@ -39,12 +42,11 @@ class PitchProcessor extends AudioWorkletProcessor {
 
   yinPitchTracking(buffer) {
     let halfBufferSize = buffer.length / 2;
-    let yinBuffer = new Float32Array(halfBufferSize);
+    // Reuse the pre-allocated buffer from constructor; clear it for this frame.
+    let yinBuffer = this._yinBuffer;
+    yinBuffer.fill(0, 0, halfBufferSize);
 
     // Step 1: calculate difference function
-    for (let t = 0; t < halfBufferSize; t++) {
-      yinBuffer[t] = 0;
-    }
     for (let t = 1; t < halfBufferSize; t++) {
       for (let i = 0; i < halfBufferSize; i++) {
         let delta = buffer[i] - buffer[i + t];
