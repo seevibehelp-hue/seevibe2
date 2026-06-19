@@ -35,6 +35,9 @@ function TrackLevelMeter({ trackId }: { trackId: string }) {
 
 export function TrackList() {
   const { tracks, selectedTrackId, selectTrack, addTrack, updateTrack, deleteTrack, isTrackListOpen, setIsTrackListOpen, aiActivePulseTrackId, isAiProducing } = useDawStore();
+  // Subscribe reactively so dropdowns refresh when devices connect/disconnect at runtime
+  const midiDevices = useDawStore(s => s.midiDevices);
+  const audioInputs  = useDawStore(s => s.audioInputs);
 
   const handleVocalDouble = (trackId: string) => {
     const state = useDawStore.getState();
@@ -253,7 +256,7 @@ export function TrackList() {
                               className="bg-transparent text-blue-400 text-[8px] outline-none w-full"
                             >
                               <option value="all">ANY Device</option>
-                              {useDawStore.getState().midiDevices.map(d => <option key={d.id} value={d.id}>{d.name}</option>)}
+                              {midiDevices.map(d => <option key={d.id} value={d.id}>{d.name}</option>)}
                             </select>
                           </div>
                         </div>
@@ -275,7 +278,7 @@ export function TrackList() {
                              className="bg-transparent text-red-400 text-[8px] outline-none w-full"
                            >
                              <option value="default">Default Mic</option>
-                             {useDawStore.getState().audioInputs.map(d => <option key={d.id} value={d.id}>{d.name}</option>)}
+                             {audioInputs.map(d => <option key={d.id} value={d.id}>{d.name}</option>)}
                            </select>
                         </div>
                       </div>

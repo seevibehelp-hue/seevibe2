@@ -525,6 +525,10 @@ class AudioEngine {
   // MIDI support
   private midiInputs: Map<string, MIDIInput> = new Map();
   public activeMidiRecordings: Map<string, Map<string, { clipId: string; noteId: string; start16ths: number }>> = new Map();
+  // Sustain pedal (CC 64) state per MIDI channel
+  private midiSustainHeld: Map<number, boolean> = new Map();
+  // Notes held open by sustain, keyed by "channel:note"
+  private midiSustainedNotes: Map<string, { trackId: string; noteName: string }> = new Map();
 
   constructor() {
     // Real-time master chain kept intentionally conservative for mobile stability.
@@ -561,8 +565,11 @@ class AudioEngine {
     this.meter = new Tone.Meter();
     this.pitchAnalyser = new Tone.Analyser("waveform", 2048);
 
+    // micChannel: kept as a dummy node for disposal safety only.
+    // Nothing connects into it — monitoring runs entirely through per-track
+    // ctx.micNode → ctx.graphicEQFilters → ctx.eq → ctx.channel paths.
     this.micChannel = new Tone.Channel().connect(this.masterHeadroom);
-    this.micChannel.mute = !useDawStore.getState().inputMonitoring;
+    this.micChannel.mute = true; // permanently muted — dead signal path
     this.metronomeSynth = new Tone.MembraneSynth({ volume: -14 }).connect(this.masterHeadroom);
 
     this.initMidi();
@@ -587,49 +594,18 @@ class AudioEngine {
     });
   }
 
+  /**
+   * @deprecated The class-level getUserMedia path opened a dangling capture
+   * stream that was never connected to any output.  All mic capture is now
+   * owned by syncAudioInputsWithTracks() (per-track ctx.micStream).
+   * This stub delegates there so any remaining call sites still work.
+   */
   public async getMediaStream(
-    echoCancellation: boolean = false,
-    noiseSuppression: boolean = false,
-    deviceId?: string,
+    _echoCancellation: boolean = false,
+    _noiseSuppression: boolean = false,
+    _deviceId?: string,
   ) {
-    if (this.micNode && typeof this.micNode.disconnect === 'function') {
-      this.micNode.disconnect();
-    }
-    try {
-      this.micStream = await navigator.mediaDevices.getUserMedia({
-           audio: {
-              deviceId: deviceId ? { exact: deviceId } : undefined,
-              echoCancellation: false,
-              noiseSuppression: false,
-              autoGainControl: false
-           }
-        });
-
-      if (!this.vocalPipeline) {
-        this.vocalPipeline = new VocalPipeline();
-        await this.vocalPipeline.init();
-      }
-      
-      this.micNode = new Tone.Gain(1);
-      const rawContext = Tone.getContext().rawContext as any;
-      
-      if (this.vocalPipeline) {
-         this.vocalPipeline.connectInput(this.micStream);
-         const processedStream = this.vocalPipeline.getOutputStream();
-         // Connect processed native stream to Tone's context
-         const sourceNode = rawContext.createMediaStreamSource(processedStream);
-         sourceNode.connect(this.micNode.input);
-      } else {
-         const sourceNode = rawContext.createMediaStreamSource(this.micStream);
-         sourceNode.connect(this.micNode.input);
-      }
-
-      // Connect properly based on monitor state
-      this.routeMicToSelectedTrack(useDawStore.getState().inputMonitoring);
-    } catch (err: any) {
-      console.error("Microphone access failed", err);
-      // alert(`Microphone access failed: \${err.message || String(err)}`);
-    }
+    await this.syncAudioInputsWithTracks();
   }
 
   private async initMidi() {
@@ -714,21 +690,94 @@ class AudioEngine {
             );
           }
         } else if (command === 128 || (command === 144 && velocity === 0)) {
-          // Note off
+          // Note off — honour sustain pedal: if held, defer release
           const pcNote = Tone.Frequency(note, "midi").toNote();
-          if (!isDrumKit) {
-            stopLowLatencySynth(pcNote, track.synthType || "poly");
+          const sustainKey = `${channel}:${note}`;
+          if (this.midiSustainHeld.get(channel)) {
+            // Park the note so it releases when pedal lifts
+            this.midiSustainedNotes.set(sustainKey, { trackId: track.id, noteName: pcNote });
+          } else {
+            if (!isDrumKit) stopLowLatencySynth(pcNote, track.synthType || "poly");
+            if (state.isRecording && isActiveTarget) this.recordMidiNoteEnd(track.id, pcNote);
+            if (track.id === state.selectedTrackId) {
+              window.dispatchEvent(new CustomEvent("midi-note-off", { detail: { note: pcNote } }));
+            }
           }
 
-          if (state.isRecording && isActiveTarget) {
-             this.recordMidiNoteEnd(track.id, pcNote);
+        } else if (command === 176) {
+          // Control Change
+          const ccNum   = note;      // second byte = CC number
+          const ccVal   = velocity;  // third byte  = value (0-127)
+          const ctx     = this.trackContexts.get(track.id);
+
+          if (ccNum === 1) {
+            // Mod wheel → tremolo depth
+            if (ctx?.tremolo) ctx.tremolo.depth.rampTo(ccVal / 127, 0.05);
+
+          } else if (ccNum === 7) {
+            // Channel volume → track fader (dB scale: 0→-inf, 64→0dB, 127→+6dB)
+            if (ctx?.channel) {
+              const db = ccVal === 0 ? -Infinity : (ccVal / 127) * 12 - 6;
+              ctx.channel.volume.rampTo(db, 0.05);
+            }
+
+          } else if (ccNum === 10) {
+            // Pan → track pan
+            if (ctx?.channel) {
+              ctx.channel.pan.rampTo((ccVal - 64) / 64, 0.05);
+            }
+
+          } else if (ccNum === 64) {
+            // Sustain pedal
+            const pedal = ccVal >= 64;
+            this.midiSustainHeld.set(channel, pedal);
+            if (!pedal) {
+              // Pedal released — stop all deferred notes on this channel
+              for (const [key, held] of this.midiSustainedNotes.entries()) {
+                if (key.startsWith(`${channel}:`)) {
+                  stopLowLatencySynth(held.noteName, track.synthType || "poly");
+                  if (state.isRecording && isActiveTarget) this.recordMidiNoteEnd(held.trackId, held.noteName);
+                  this.midiSustainedNotes.delete(key);
+                }
+              }
+            }
+
+          } else if (ccNum === 74) {
+            // Brightness / filter cutoff → lowpass filter frequency
+            if (ctx?.lowpass) {
+              // Map 0-127 → 200 Hz – 18 kHz (log scale)
+              const freq = 200 * Math.pow(90, ccVal / 127);
+              ctx.lowpass.frequency.rampTo(freq, 0.05);
+            }
+
+          } else if (ccNum === 121) {
+            // Reset all controllers
+            this.midiSustainHeld.set(channel, false);
+            if (ctx?.tremolo) ctx.tremolo.depth.rampTo(0, 0.05);
+
+          } else if (ccNum === 123) {
+            // All notes off
+            stopAllLowLatencyVoices();
           }
 
+        } else if (command === 224) {
+          // Pitch bend — 14-bit signed value centred at 8192
+          const pitchValue = ((velocity << 7) | note) - 8192; // -8192 to +8191
+          const semitones  = (pitchValue / 8192) * 2;          // ±2 semitone range
+          const ctx = this.trackContexts.get(track.id);
+          if (ctx?.pitchShift) {
+            ctx.pitchShift.pitch = semitones;
+            ctx.pitchShift.wet.value = Math.abs(semitones) > 0.01 ? 1 : 0;
+          }
           if (track.id === state.selectedTrackId) {
-            window.dispatchEvent(
-              new CustomEvent("midi-note-off", { detail: { note: pcNote } }),
-            );
+            window.dispatchEvent(new CustomEvent("midi-pitch-bend", { detail: { semitones } }));
           }
+
+        } else if (command === 208) {
+          // Channel aftertouch → modulate tremolo / filter brightness
+          const pressure = velocity / 127;
+          const ctx = this.trackContexts.get(track.id);
+          if (ctx?.tremolo) ctx.tremolo.depth.rampTo(pressure * 0.5, 0.02);
         }
       }
     });
@@ -1066,7 +1115,13 @@ class AudioEngine {
 
         const isSelected = state.selectedTrackId === track.id;
         if (isSelected && state.inputMonitoring) {
-          ctx.micNode.connect(ctx.eq);
+          // Route through the full 10-band graphic EQ chain first (same path
+          // as synth playback) so EQ settings affect monitored mic signal too.
+          if (ctx.graphicEQFilters && ctx.graphicEQFilters.length > 0) {
+            ctx.micNode.connect(ctx.graphicEQFilters[0]);
+          } else {
+            ctx.micNode.connect(ctx.eq);
+          }
         }
       }
     }
@@ -1335,11 +1390,10 @@ class AudioEngine {
 
       // Handle audio input change
       if (state.selectedAudioInputId !== prevState.selectedAudioInputId) {
-        this.getMediaStream(
-          false,
-          false,
-          state.selectedAudioInputId || undefined,
-        );
+        // Re-sync all per-track streams to the new global device.
+        // getMediaStream() opened a class-level dangling stream — use
+        // syncAudioInputsWithTracks() which owns the per-track capture.
+        this.syncAudioInputsWithTracks();
       }
       
       if (state.selectedAudioOutputId !== prevState.selectedAudioOutputId) {
@@ -1764,6 +1818,11 @@ class AudioEngine {
     if (!state.isRecording) {
       Tone.Transport.loopEnd = `${bars + 1}m`;
     }
+
+    // Re-sync audio inputs whenever tracks change — covers: new audio tracks added,
+    // per-track audioInputId edited, track armed/unarmed, selected track changed.
+    // This is async but deliberately not awaited so it never blocks the UI thread.
+    this.syncAudioInputsWithTracks();
 
     // Sync Tracks
     const currentTrackIds = new Set(state.tracks.map((t) => t.id));
