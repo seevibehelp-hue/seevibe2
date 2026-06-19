@@ -505,6 +505,15 @@ class AudioEngine {
   // Visualizer / Waveform peaks while recording
   public liveRecordingSegments: { start16thsOffset: number, duration16ths: number, peaks: number[], audioOffset16ths: number }[] = [];
   public currentRecordingPeakLevel: number = 0;
+
+  /**
+   * Returns a direct reference to the live peak array for the given track.
+   * Read-only — do not mutate. Sampled every 50 ms by the recording interval.
+   * Returns an empty array when the track is not recording.
+   */
+  public getLivePeaksForTrack(trackId: string): number[] {
+    return this.trackContexts.get(trackId)?.liveRecordingPeaks ?? [];
+  }
   private recordingInterval: any = null;
   private liveRecordingPeaks: number[] = [];
 

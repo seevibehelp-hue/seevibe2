@@ -7,111 +7,16 @@ import { Scissors, Trash2, Copy, VolumeX, FastForward, Rewind, Volume2, CheckSqu
 import { audioEngine } from '../../audio/engine';
 import { motion, AnimatePresence } from 'framer-motion';
 import { timelineEvents } from '../../utils/timelineEvents';
+import { LiveWaveformCanvas, WaveformCanvas, extractPeaksFromUrl } from './WaveformDisplay';
 
 const GRID_SIZE = 16; // width in px for one 16th note
 const DEFAULT_TRACK_HEIGHT = 72; 
 const COLLAPSED_TRACK_HEIGHT = 28;
 
-function LiveRecordingClip({ trackId, color, gridSize }: { trackId: string, color: string, gridSize: number }) {
-  const [width, setWidth] = useState(0);
-  const [left, setLeft] = useState(0);
-  const [peaks, setPeaks] = useState<number[]>([]);
-  
-  const [segments, setSegments] = useState<any[]>([]);
-
-  useEffect(() => {
-    let animationFrameId: number;
-    let localPeaks: number[] = [];
-    
-    const updateRecording = () => {
-      const state = useDawStore.getState();
-      if (!state.isRecording || state.selectedTrackId !== trackId || state.recordingStart16ths === null) {
-         setWidth(prev => prev !== 0 ? 0 : 0);
-         setSegments([]);
-         return;
-      }
-      
-      const currentTicks = Tone.Transport.state === 'started' ? Tone.Transport.ticks : (state.transportPosition * 48);
-      const current16ths = currentTicks / 48;
-      const duration16ths = Math.max(0, current16ths - state.recordingStart16ths);
-      
-      const newLeft = state.recordingStart16ths * gridSize;
-      const newWidth = Math.max(gridSize, duration16ths * gridSize);
-      
-      setLeft(prevLeft => Math.abs(prevLeft - newLeft) > 1 ? newLeft : prevLeft);
-      setWidth(prevWidth => Math.abs(prevWidth - newWidth) > 1 ? newWidth : prevWidth);
-      
-      setSegments([...audioEngine.liveRecordingSegments]);
-      
-      // Every few frames, sample the peak
-      if (Math.random() > 0.8) {
-         localPeaks.push(audioEngine.currentRecordingPeakLevel || 0);
-         // Keep max 200 peaks to prevent huge memory
-         if (localPeaks.length > 200) localPeaks.shift(); 
-         setPeaks([...localPeaks]);
-      }
-
-      animationFrameId = requestAnimationFrame(updateRecording);
-    };
-    updateRecording();
-    return () => cancelAnimationFrame(animationFrameId);
-  }, [trackId]);
-
-  if (width === 0) return null;
-
-  return (
-    <>
-      <div
-        className="absolute top-2 bottom-2 rounded border border-red-500/30 z-20 pointer-events-none overflow-hidden duration-75"
-        style={{
-          left,
-          width,
-          backgroundColor: `${color}10`,
-          borderColor: `rgba(255,0,0,0.3)`,
-        }}
-      >
-        <div className="absolute inset-0 opacity-10 pointer-events-none bg-red-500" />
-      </div>
-
-      {segments.map((seg, i) => (
-        <div
-          key={i}
-          className="absolute top-2 bottom-2 rounded border border-red-500 bg-red-500/30 z-30 pointer-events-none overflow-hidden duration-75 flex items-center justify-between gap-[1px]"
-          style={{
-            left: left + seg.start16thsOffset * gridSize,
-            width: Math.max(2, seg.duration16ths * gridSize),
-          }}
-        >
-          {seg.peaks.filter((_: any, idx: number) => idx % Math.max(1, Math.floor(seg.peaks.length / 100)) === 0).slice(0, 100).map((p: number, idx: number) => (
-            <div
-              key={idx}
-              className="flex-grow bg-red-400 rounded-full min-h-[4px]"
-              style={{ minWidth: '1px', height: `${Math.max(10, p * 100)}%` }}
-            />
-          ))}
-        </div>
-      ))}
-      
-      {/* Active unsegmentized peaks indicator at the end */}
-      {peaks.length > 0 && (
-         <div
-            className="absolute top-2 bottom-2 rounded border-r border-y border-red-500 bg-red-500/20 z-30 pointer-events-none overflow-hidden duration-75 flex items-center justify-between gap-[1px]"
-            style={{
-              left: left + (segments.length > 0 ? (segments[segments.length - 1].start16thsOffset + segments[segments.length - 1].duration16ths) * gridSize : 0),
-              width: Math.max(2, width - (segments.length > 0 ? (segments[segments.length - 1].start16thsOffset + segments[segments.length - 1].duration16ths) * gridSize : 0)),
-            }}
-          >
-            {peaks.filter((_: any, idx: number) => idx % Math.max(1, Math.floor(peaks.length / 100)) === 0).slice(-100).map((p: number, idx: number) => (
-              <div
-                key={idx}
-                className="flex-grow bg-red-500 rounded-full flex-shrink-0 min-h-[4px]"
-                style={{ minWidth: '1px', height: `${Math.max(10, p * 100)}%` }}
-              />
-            ))}
-          </div>
-      )}
-    </>
-  );
+// LiveRecordingClip delegates entirely to LiveWaveformCanvas (canvas-based,
+// zero React state updates during rAF, per-track peaks from engine).
+function LiveRecordingClip({ trackId, gridSize }: { trackId: string, color: string, gridSize: number }) {
+  return <LiveWaveformCanvas trackId={trackId} gridSize={gridSize} />;
 }
 
 export function Arrangement() {
@@ -163,6 +68,43 @@ export function Arrangement() {
   const aiActivePulseTrackId = useDawStore(s => s.aiActivePulseTrackId);
 
   const arrangementRef = useRef<HTMLDivElement>(null);
+
+  // -------------------------------------------------------------------------
+  // Peak extraction for imported / recorded audio clips that have an audioUrl
+  // but no recordingPeaks yet.  Runs on mount and whenever clips change.
+  // A Set prevents double-extraction if the subscription fires before the
+  // async decode finishes.
+  // -------------------------------------------------------------------------
+  const extractingClips = useRef(new Set());
+
+  useEffect(() => {
+    function extractMissingPeaks(clips) {
+      Object.values(clips).forEach((clip) => {
+        if (
+          clip.audioUrl &&
+          (!clip.recordingPeaks || clip.recordingPeaks.length === 0) &&
+          !extractingClips.current.has(clip.id)
+        ) {
+          extractingClips.current.add(clip.id);
+          extractPeaksFromUrl(clip.audioUrl, 300).then((peaks) => {
+            extractingClips.current.delete(clip.id);
+            if (peaks.length > 0) {
+              useDawStore.getState().updateClip(clip.id, { recordingPeaks: peaks });
+            }
+          });
+        }
+      });
+    }
+
+    // Initial pass on mount
+    extractMissingPeaks(useDawStore.getState().clips);
+
+    // Subscribe to clip changes so newly imported/recorded clips also get peaks
+    const unsub = useDawStore.subscribe((state, prev) => {
+      if (state.clips !== prev.clips) extractMissingPeaks(state.clips);
+    });
+    return () => unsub();
+  }, []);
 
   useEffect(() => {
     const unsubscribe = timelineEvents.subscribe((event) => {
@@ -938,47 +880,21 @@ export function Arrangement() {
                       })()}
                     </div>
                   ) : (
-                    <div className="relative z-10 mt-1 h-full w-full pointer-events-none">
-                      <div className="relative h-full flex items-center justify-start opacity-70">
-                        {clip.recordingPeaks && clip.recordingPeaks.length > 0 ? (
-                          <div className="absolute inset-0 flex items-end justify-between gap-[1px] overflow-hidden">
-                            {clip.recordingPeaks.map((p, i) => {
-                              const current16thRelative = (i / (clip.recordingPeaks?.length || 1)) * clip.duration;
-                              const matchedNote = clip.vocalNotes?.find(
-                                n => current16thRelative >= n.startTime && current16thRelative <= n.startTime + n.duration
-                              );
-                              const isSilence = matchedNote?.isSilence;
-                              const isSpoken = matchedNote && !isSilence;
-
-                              let peakBg = "bg-white/10";
-                              if (isSpoken) {
-                                // Dynamic green gradient depending on volume
-                                const loudness = matchedNote?.loudness || 0.04;
-                                peakBg = loudness > 0.08 ? "bg-emerald-400" : "bg-[#00FF9C]";
-                              } else if (isSilence) {
-                                peakBg = "bg-zinc-800/40 border-b border-zinc-700/20";
-                              }
-
-                              return (
-                                <div 
-                                  key={i} 
-                                  className={`rounded flex-grow ${peakBg}`} 
-                                  style={{ 
-                                    minWidth: '1px', 
-                                    height: `${Math.max(5, p * 100)}%`
-                                  }} 
-                                />
-                              );
-                            })}
-                          </div>
-                        ) : (
-                          <div className="absolute inset-0 flex items-center justify-between gap-[1px] overflow-hidden">
-                            {Array.from({ length: Math.min(100, Math.floor(clip.duration * 2.5)) }).map((_, i) => (
-                              <div key={i} className="bg-white opacity-20 rounded flex-grow" style={{ minWidth: '1px', height: `${20 + Math.random() * 80}%` }} />
-                            ))}
-                          </div>
-                        )}
-                      </div>
+                    // Canvas-based waveform — symmetric bars from centre.
+                    // Loud = tall bars, silent = flat 1px centre line.
+                    // WaveformCanvas handles its own ResizeObserver so zoom
+                    // changes automatically trigger a redraw.
+                    // While peaks are being extracted from a new import, the
+                    // canvas renders nothing (blank) — not random noise.
+                    <div className="relative z-10 h-full w-full pointer-events-none overflow-hidden">
+                      {clip.recordingPeaks && clip.recordingPeaks.length > 0 ? (
+                        <WaveformCanvas peaks={clip.recordingPeaks} />
+                      ) : (
+                        // No peaks yet — show a thin baseline while extraction runs
+                        <div className="absolute inset-0 flex items-center pointer-events-none">
+                          <div className="w-full h-px bg-white/20 rounded" />
+                        </div>
+                      )}
                     </div>
                   )}
                 </motion.div>
