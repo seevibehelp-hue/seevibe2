@@ -651,9 +651,10 @@ export function VocalRoll() {
       frequency: firstNote.frequency,
       word: selectedNotes.map(n => n.word).filter(Boolean).join(" "),
       pitchCurve: combinedCurve,
-      isSilence: firstNote.isSilence,
-      loudness: firstNote.loudness
-    };
+        originalPitchCurve: [...combinedCurve],
+        isSilence: firstNote.isSilence,
+        loudness: firstNote.loudness
+      };
 
     const newNotes = (clip.vocalNotes || []).filter(n => !markedNoteIds.includes(n.id));
     newNotes.push(mergedNote);
@@ -939,10 +940,13 @@ export function VocalRoll() {
   // Convert scrubber values
   const handleScrubberChange = (type: string, value: number) => {
     if (type === 'retuneTime') {
-      setRetuneTime(value);
-      const calculatedSpeed = Math.round(100 - (value / 250) * 100);
-      handleUpdatePitchCorrection({ speed: calculatedSpeed });
-    } else if (type === 'retuneAmount') {
+        setRetuneTime(value);
+        const calculatedSpeed = Math.round(100 - (value / 250) * 100);
+        handleUpdatePitchCorrection({ speed: calculatedSpeed });
+        if (audioEngine.vocalPipeline) {
+          audioEngine.vocalPipeline.retuneSpeed = calculatedSpeed;
+        }
+      } else if (type === 'retuneAmount') {
       handleUpdatePitchCorrection({ amount: value });
     } else if (type === 'volume') {
       setVolumeDb(value);
@@ -1137,18 +1141,18 @@ export function VocalRoll() {
             <span className="text-[10px] text-white font-mono mt-0.5">{(volumeDb >= 0 ? "+" : "") + volumeDb.toFixed(1)} dB</span>
           </div>
 
-          {/* Card: Formant Corr */}
-          <div className="bg-[#181818] border border-neutral-800 hover:border-neutral-700 rounded-xl p-2 text-center min-w-[100px] shrink-0 h-12 flex flex-col justify-center select-none cursor-pointer">
+          {/* Card: Formant Corr — coming soon, not yet implemented */}
+          <div className="bg-[#181818] border border-neutral-800 rounded-xl p-2 text-center min-w-[100px] shrink-0 h-12 flex flex-col justify-center select-none opacity-40 cursor-not-allowed" title="Formant correction — coming soon">
             <span className="text-[8px] text-[#FA9534] tracking-widest font-bold block uppercase">Formant corr.</span>
             <input 
               type="range" 
               min="0" 
               max="100" 
-              value={formantCorr} 
-              onChange={(e) => handleScrubberChange('formant', Number(e.target.value))}
-              className="w-full h-1 mt-1 cursor-ew-resize accent-[#FA9534] bg-neutral-800 rounded-lg appearance-none"
+              value={100} 
+              disabled
+              className="w-full h-1 mt-1 cursor-not-allowed accent-[#FA9534] bg-neutral-800 rounded-lg appearance-none"
             />
-            <span className="text-[10px] text-white font-mono mt-0.5">{formantCorr} %</span>
+            <span className="text-[10px] text-neutral-500 font-mono mt-0.5">Soon</span>
           </div>
         </div>
 
@@ -1447,7 +1451,8 @@ export function VocalRoll() {
                   displayDur = Math.max(1, displayDur + noteResizeDelta.dx16ths);
                 }
 
-                const visualRowIndex = DISPLAY_KEYS.findIndex(k => k === note.noteName);
+                const displayNoteName = Tone.Frequency(displayMidi, "midi").toNote();
+                const visualRowIndex = DISPLAY_KEYS.findIndex(k => k === displayNoteName);
                 if (visualRowIndex === -1) return null;
 
                 const blobColor = getBlobColor(note, isMarked);

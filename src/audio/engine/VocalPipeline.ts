@@ -126,11 +126,20 @@ class AutotuneProcessor extends AudioWorkletProcessor {
     this.readB = 0;
     this.needsInit = true;
 
-    this.port.onmessage = (e) => {
-      if (e.data.type === 'setPitchParam') {
-        this.targetRatio = Math.pow(2, e.data.cents / 1200);
-      }
-    };
+      // Smoothing alpha: maps retuneSpeed (0-100) to an RC-style coefficient.
+      // retuneSpeed=100 -> alpha=1.0 (instant snap), retuneSpeed=0 -> alpha=0.001 (very slow glide).
+      this.smoothAlpha = 0.02;
+
+      this.port.onmessage = (e) => {
+        if (e.data.type === 'setPitchParam') {
+          this.targetRatio = Math.pow(2, e.data.cents / 1200);
+        } else if (e.data.type === 'setRetuneAlpha') {
+          this.smoothAlpha = e.data.alpha;
+        } else if (e.data.type === 'setAllowedNotes') {
+          // Scale-locking is handled in the main thread (handlePitchCorrection).
+          // Message received and acknowledged — no worklet-side action needed.
+        }
+      };
   }
 
   process(inputs, outputs) {
@@ -142,8 +151,8 @@ class AutotuneProcessor extends AudioWorkletProcessor {
     const dst = out[0];
     const bufLen = this.bufLen;
 
-    // Gentle ratio smoothing — avoids sudden pitch jumps
-    this.ratio += (this.targetRatio - this.ratio) * 0.02;
+    // Gentle ratio smoothing — avoids sudden pitch jumps. Alpha driven by retuneSpeed.
+    this.ratio += (this.targetRatio - this.ratio) * this.smoothAlpha;
     const ratio = this.ratio;
     const fixedDelay = Math.round(this.sampleRate * 0.04); // 40ms fixed latency
 
@@ -239,7 +248,18 @@ export class VocalPipeline {
 
   // Autotune Settings
   public autotuneEnabled = true;
-  public retuneSpeed = 50; // 0 (slow) to 100 (fast)
+  private _retuneSpeed = 50; // 0 (slow) to 100 (fast)
+
+  public get retuneSpeed() { return this._retuneSpeed; }
+  public set retuneSpeed(value: number) {
+    this._retuneSpeed = value;
+    // Map speed (0-100) to RC smoothing alpha:
+    // speed=100 -> alpha=1.0 (instant), speed=0 -> alpha=0.001 (very slow glide, ~2s)
+    const alpha = value === 100 ? 1.0 : Math.max(0.001, (value / 100) * 0.3);
+    if (this.autotuneNode) {
+      this.autotuneNode.port.postMessage({ type: 'setRetuneAlpha', alpha });
+    }
+  }
   public key: string = 'C';
   public scaleType: string = 'Chromatic';
   private allowedMidiNotes: number[] = [];
