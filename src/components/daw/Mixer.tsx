@@ -16,7 +16,7 @@ export function Mixer() {
     { label: "GAIN STAGING & HEADROOM BALANCE", desc: "Leveling track gains to clean summing ceiling (-6dB)..." },
     { label: "ANALOG GLUE COMPRESSION", desc: "Smoothing channel transients for cohesive warmth..." },
     { label: "MID-SIDE STEREO WIDENING", desc: "Spreading synths & plucks for spatial stereo imaging..." },
-    { label: "FL STUDIO MAXIMIZER BOOST", desc: "Driving +12.5dB fader gain directly into brickwall master..." },
+    { label: "LOUDNESS MAXIMIZER", desc: "Optimizing master fader to 0 dBFS — limiter handles final ceiling..." },
     { label: "SAFETY LIMITING PINNING", desc: "Locking output ceiling at -0.5 dBFS. Playback ready!" }
   ];
 
@@ -52,8 +52,11 @@ export function Mixer() {
           clearInterval(interval);
           setShowDoneScreen(true);
           
-          // Phase 4 & 5: Apply FL Studio master maximize fader level to push hot signal
-          setMasterVolume(1.5);
+          // Phase 4 & 5: Master fader sits at 0 dBFS — the master chain
+          // (headroom → compressor → limiter) handles loudness; pushing it to
+          // 1.5 was a unit mismatch that treated a dBFS value as a raw linear
+          // gain and clipped the output.
+          setMasterVolume(0);
           return prev;
         }
 

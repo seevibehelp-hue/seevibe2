@@ -17,7 +17,7 @@ import * as Tone from 'tone';
 import { getFinalVibe, applyVibeToEngineAndTimeline, generateProceduralNotesForVibe, livePreviewController, SongStructure, SongSection, defaultSongStructure, detectAndInsertDrops, adaptDropIntensity, createImpactDrop, aiDetermineOptimalDrops, renewCompositionSeed } from '../../utils/vibeEngine';
 import { audioEngine } from '../../audio/engine';
 import { analyzeAudioPitch } from '../../audio/vocalAnalysis';
-import { apiUrl } from '../../lib/apiBase';
+import { apiUrl, apiFetch } from '../../lib/apiBase';
 
 // Enum matches: ANALYZE_VOCAL, GENERATE_DRUMS, GENERATE_BASS, GENERATE_CHORDS, GENERATE_MELODY, GENERATE_FX, ARRANGE_SONG, PROCESS_VOCALS, MIX_PROJECT, MASTER_PROJECT, EXPORT_PROJECT, FULL_AUTO_PRODUCE
 export type AiAction = 
@@ -2564,7 +2564,10 @@ export function ChatView() {
 
       if (!usedSupabaseEdge) {
         const { data: { session: _sess } } = await supabase.auth.getSession();
-        const res = await fetch(apiUrl('/api/ai/chat'), {
+        // apiFetch throws a descriptive error if the server returns HTML
+        // (missing route → SPA shell) instead of JSON, preventing the
+        // cryptic "Unexpected token '<'" crash.
+        const res = await apiFetch('/api/ai/chat', {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
@@ -2581,26 +2584,6 @@ export function ChatView() {
             config
           })
         });
-
-        if (!res.ok) {
-          let serverMsg = '';
-          try {
-            const ct = res.headers.get('content-type') || '';
-            if (ct.includes('application/json')) {
-              const j = await res.json();
-              serverMsg = j?.error || JSON.stringify(j);
-            } else {
-              serverMsg = (await res.text()).slice(0, 200);
-            }
-          } catch {}
-          throw new Error(`AI request failed (${res.status}). ${serverMsg}`);
-        }
-
-        const ct = res.headers.get('content-type') || '';
-        if (!ct.includes('application/json')) {
-          const text = (await res.text()).slice(0, 200);
-          throw new Error(`AI endpoint returned non-JSON response (likely the app shell instead of the API). First bytes: ${text}`);
-        }
 
         response = await res.json();
       }

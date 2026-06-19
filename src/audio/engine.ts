@@ -1384,7 +1384,8 @@ class AudioEngine {
     this.unsubscribe = useDawStore.subscribe((state, prevState) => {
       // Handle Master Volume changes
       if (state.masterVolume !== prevState.masterVolume) {
-        this.masterHeadroom.volume.value = state.masterVolume - 6;
+        // rampTo avoids the click/zipper artifact on live master-fader moves
+        this.masterHeadroom.volume.rampTo(state.masterVolume - 6, 0.01);
       }
 
       // Handle audio input change
@@ -1836,9 +1837,9 @@ class AudioEngine {
         this.trackContexts.set(track.id, ctx);
       }
 
-      // Update FX and Channel
-      ctx.channel.volume.value = track.volume ?? 0;
-      ctx.channel.pan.value = track.pan ?? 0;
+      // Update FX and Channel — use rampTo to avoid zipper/click noise during live playback
+      ctx.channel.volume.rampTo(track.volume ?? 0, 0.01);
+      ctx.channel.pan.rampTo(track.pan ?? 0, 0.01);
       ctx.channel.mute = !!track.muted;
       ctx.channel.solo = !!track.soloed;
 
@@ -1879,28 +1880,28 @@ class AudioEngine {
       ctx.pitchShift.pitch = track.fx?.pitchShift?.enabled
         ? (track.fx.pitchShift.pitch ?? 0)
         : 0;
-      ctx.pitchShift.wet.value = track.fx?.pitchShift?.enabled ? 1 : 0;
+      ctx.pitchShift.wet.rampTo(track.fx?.pitchShift?.enabled ? 1 : 0, 0.01);
 
       ctx.chorus.depth.value = track.fx?.chorus?.depth ?? 0.5;
       ctx.chorus.frequency.value = track.fx?.chorus?.frequency ?? 1.5;
       ctx.chorus.delayTime = track.fx?.chorus?.delayTime ?? 2.5;
-      ctx.chorus.wet.value = track.fx?.chorus?.enabled
+      ctx.chorus.wet.rampTo(track.fx?.chorus?.enabled
         ? (track.fx.chorus.wet ?? 0.5)
-        : 0;
+        : 0, 0.01);
 
-      ctx.delay.wet.value = track.fx?.delay?.enabled
+      ctx.delay.wet.rampTo(track.fx?.delay?.enabled
         ? (track.fx.delay.mix ?? 0.2)
-        : 0;
+        : 0, 0.01);
       if (track.fx?.delay) {
-        ctx.delay.feedback.value = Math.min(0.95, track.fx.delay.feedback ?? 0.3);
+        ctx.delay.feedback.rampTo(Math.min(0.95, track.fx.delay.feedback ?? 0.3), 0.01);
         try { ctx.delay.delayTime.value = track.fx.delay.time ?? '8n'; } catch (_) {}
       }
-      ctx.reverb.wet.value = track.fx?.reverb?.enabled
+      ctx.reverb.wet.rampTo(track.fx?.reverb?.enabled
         ? (track.fx.reverb.mix ?? 0.3)
-        : 0;
+        : 0, 0.01);
       // Sync roomSize from decay slider (0.1–10s → 0.01–0.98 normalised)
       if (track.fx?.reverb) {
-        ctx.reverb.roomSize.value = Math.min(0.98, (track.fx.reverb.decay ?? 1.5) / 10.2);
+        ctx.reverb.roomSize.rampTo(Math.min(0.98, (track.fx.reverb.decay ?? 1.5) / 10.2), 0.01);
       }
 
       // Update Graphic EQ
@@ -2567,7 +2568,18 @@ class AudioEngine {
       });
       // Force a re-sync on next tick so all audio clips get rebuilt and re-scheduled.
       const state = useDawStore.getState();
-      this.syncToneWithState(state);
+      // After a mobile WebView resume the Transport may internally be stalled even
+      // though Tone.Transport.state still reads "started".  Force an explicit
+      // restart so audio clips don't stay silent.
+      if (state.playbackState === 'playing') {
+        try {
+          Tone.Transport.stop();
+          Tone.Transport.start('+0.05');
+        } catch (_) {}
+      }
+      // Pass null as prevState to bypass the track-diff guard so every clip
+      // player gets fully rebuilt after the resume.
+      this.syncToneWithState(state, null);
     } catch (e) {
       console.warn('[engine] refreshAudioPlayersAfterResume failed:', e);
     }
@@ -3290,471 +3302,6 @@ class AudioEngine {
       url: URL.createObjectURL(nativeBlob),
       blob: nativeBlob,
     };
-
-    return Tone.Offline(() => {
-      const offlineBpm = Math.max(1, Number(state.bpm) || 120);
-      Tone.Transport.bpm.value = offlineBpm;
-      const oneSixteenthSecs = 15 / offlineBpm;
-
-      const offlineContexts = new Map<string, TrackContext>();
-      const trackOfflineInputNodeMap = new Map<string, Tone.ToneAudioNode>();
-
-      // Recreate mastering chain
-      const masterHeadroom = new Tone.Volume(state.masterVolume - 6);
-      const masterCompressor = new Tone.Compressor({
-        threshold: -14,
-        ratio: 2.2,
-        attack: 0.015,
-        release: 0.2
-      });
-      const masterMaximizer = new Tone.Volume(12.5); // FL Studio Loudness Maximizer Gain Boost
-      const masterLimiter = new Tone.Compressor({
-        threshold: -0.5,
-        ratio: 20,
-        attack: 0.001,
-        release: 0.15
-      });
-
-      masterHeadroom.connect(masterCompressor);
-      masterCompressor.connect(masterMaximizer);
-      masterMaximizer.connect(masterLimiter);
-      masterLimiter.toDestination();
-
-      state.tracks.forEach((track) => {
-        const channel = new Tone.Channel();
-        const eq = new Tone.EQ3();
-        const compressor = new Tone.Compressor();
-        const pitchShift = new Tone.PitchShift({ windowSize: 0.12, wet: 0 });
-        const chorus = new Tone.Chorus({ frequency: 1.5, delayTime: 2.5, depth: 0.5, wet: 0 });
-        const delay = new Tone.FeedbackDelay({ wet: 0 });
-        const reverb = new Tone.Freeverb({ roomSize: 0.7, dampening: 3000, wet: 0 });
-
-        // Instantiate premium effects
-        const gate = new Tone.Gate({ threshold: -40 });
-        const highpass = new Tone.Filter({ type: "highpass", frequency: 200 });
-        const lowpass = new Tone.Filter({ type: "lowpass", frequency: 2000 });
-        const bandpass = new Tone.Filter({ type: "bandpass", frequency: 1000 });
-        const distortion = new Tone.Distortion({ distortion: 0.4, wet: 0 });
-        const bitcrusher = new Tone.BitCrusher(8);
-        bitcrusher.wet.value = 0;
-        const phaser = new Tone.Phaser({ frequency: 1.5, wet: 0 });
-        const tremolo = new Tone.Tremolo({ frequency: 5, depth: 0.5, wet: 0 }).start();
-        const pingPongDelay = new Tone.PingPongDelay({ delayTime: "4n", feedback: 0.3, wet: 0 });
-        const voicePitcher = new Tone.PitchShift({ windowSize: 0.12, wet: 0 });
-
-        const freqs = [31, 62, 125, 250, 500, 1000, 2000, 4000, 8000, 16000];
-        const graphicEQFilters = freqs.map(freq => new Tone.Filter({
-          type: "peaking",
-          frequency: freq,
-          Q: 1.4,
-          gain: 0
-        }));
-
-        // Series connect graphic EQ peaking filters
-        for (let i = 0; i < graphicEQFilters.length - 1; i++) {
-          graphicEQFilters[i].connect(graphicEQFilters[i+1]);
-        }
-        // Connect the last EQ band to standard eq
-        graphicEQFilters[graphicEQFilters.length - 1].connect(eq);
-
-        // Apply parameter values from store
-        if (track.fx?.eq?.enabled) {
-          eq.high.value = track.fx.eq.high ?? 0;
-          eq.mid.value = track.fx.eq.mid ?? 0;
-          eq.low.value = track.fx.eq.low ?? 0;
-        } else {
-          eq.high.value = 0;
-          eq.mid.value = 0;
-          eq.low.value = 0;
-        }
-
-        if (track.fx?.graphicEQ) {
-          const bands = [
-            track.fx.graphicEQ.band1 ?? 0,
-            track.fx.graphicEQ.band2 ?? 0,
-            track.fx.graphicEQ.band3 ?? 0,
-            track.fx.graphicEQ.band4 ?? 0,
-            track.fx.graphicEQ.band5 ?? 0,
-            track.fx.graphicEQ.band6 ?? 0,
-            track.fx.graphicEQ.band7 ?? 0,
-            track.fx.graphicEQ.band8 ?? 0,
-            track.fx.graphicEQ.band9 ?? 0,
-            track.fx.graphicEQ.band10 ?? 0,
-          ];
-          graphicEQFilters.forEach((filter, idx) => {
-            filter.gain.value = track.fx?.graphicEQ?.enabled ? (bands[idx] ?? 0) : 0;
-          });
-        }
-
-        compressor.threshold.value = track.fx?.compressor?.enabled ? (track.fx.compressor.threshold ?? -24) : 0;
-        compressor.ratio.value = track.fx?.compressor?.enabled ? (track.fx.compressor.ratio ?? 12) : 1;
-
-        pitchShift.pitch = track.fx?.pitchShift?.enabled ? (track.fx.pitchShift.pitch ?? 0) : 0;
-        pitchShift.wet.value = track.fx?.pitchShift?.enabled ? 1 : 0;
-
-        chorus.depth = track.fx?.chorus?.depth ?? 0.5;
-        chorus.frequency.value = track.fx?.chorus?.frequency ?? 1.5;
-        chorus.delayTime = track.fx?.chorus?.delayTime ?? 2.5;
-        chorus.wet.value = track.fx?.chorus?.enabled ? (track.fx.chorus.wet ?? 0.5) : 0;
-
-        delay.wet.value = track.fx?.delay?.enabled ? (track.fx.delay.mix ?? 0.2) : 0;
-        reverb.wet.value = track.fx?.reverb?.enabled ? (track.fx.reverb.mix ?? 0.3) : 0;
-
-        if (track.fx?.gate) {
-          gate.threshold = track.fx.gate.enabled ? (track.fx.gate.threshold ?? -40) : -100;
-        }
-        if (track.fx?.highpass) {
-          highpass.frequency.value = track.fx.highpass.frequency ?? 200;
-          highpass.Q.value = track.fx.highpass.Q ?? 1;
-        }
-        if (track.fx?.lowpass) {
-          lowpass.frequency.value = track.fx.lowpass.frequency ?? 2000;
-          lowpass.Q.value = track.fx.lowpass.Q ?? 1;
-        }
-        if (track.fx?.bandpass) {
-          bandpass.frequency.value = track.fx.bandpass.frequency ?? 1000;
-          bandpass.Q.value = track.fx.bandpass.Q ?? 1;
-        }
-        if (track.fx?.distortion) {
-          distortion.distortion = track.fx.distortion.amount ?? 0.4;
-          distortion.wet.value = track.fx.distortion.enabled ? (track.fx.distortion.wet ?? 0.5) : 0;
-        }
-        if (track.fx?.bitcrusher) {
-          bitcrusher.wet.value = track.fx.bitcrusher.enabled ? (track.fx.bitcrusher.wet ?? 0.5) : 0;
-        }
-        if (track.fx?.phaser) {
-          phaser.frequency.value = track.fx.phaser.frequency ?? 1.5;
-          phaser.Q.value = (track.fx.phaser.depth ?? 0.5) * 10;
-          phaser.wet.value = track.fx.phaser.enabled ? (track.fx.phaser.wet ?? 0.5) : 0;
-        }
-        if (track.fx?.tremolo) {
-          tremolo.frequency.value = track.fx.tremolo.frequency ?? 5;
-          tremolo.depth.value = track.fx.tremolo.depth ?? 0.5;
-          tremolo.wet.value = track.fx.tremolo.enabled ? (track.fx.tremolo.wet ?? 0.5) : 0;
-        }
-        if (track.fx?.pingPongDelay) {
-          pingPongDelay.feedback.value = track.fx.pingPongDelay.feedback ?? 0.3;
-          pingPongDelay.delayTime.value = track.fx.pingPongDelay.time as any ?? "4n";
-          pingPongDelay.wet.value = track.fx.pingPongDelay.enabled ? (track.fx.pingPongDelay.wet ?? 0.4) : 0;
-        }
-        if (track.fx?.voicePitcher) {
-          voicePitcher.pitch = track.fx.voicePitcher.shift ?? 0;
-          voicePitcher.wet.value = track.fx.voicePitcher.enabled ? (track.fx.voicePitcher.wet ?? 0.5) : 0;
-        }
-
-        // Build serial fxChain matching live chain structure
-        const fxChain: any[] = [eq, compressor];
-        if (track.fx?.gate?.enabled) fxChain.push(gate);
-        if (track.fx?.highpass?.enabled) fxChain.push(highpass);
-        if (track.fx?.lowpass?.enabled) fxChain.push(lowpass);
-        if (track.fx?.bandpass?.enabled) fxChain.push(bandpass);
-        if (track.fx?.distortion?.enabled) fxChain.push(distortion);
-        if (track.fx?.bitcrusher?.enabled) fxChain.push(bitcrusher);
-        if (track.fx?.pitchShift?.enabled) fxChain.push(pitchShift);
-        if (track.fx?.voicePitcher?.enabled) fxChain.push(voicePitcher);
-        if (track.fx?.phaser?.enabled) fxChain.push(phaser);
-        if (track.fx?.tremolo?.enabled) fxChain.push(tremolo);
-        if (track.fx?.chorus?.enabled) fxChain.push(chorus);
-        if (track.fx?.delay?.enabled) fxChain.push(delay);
-        if (track.fx?.pingPongDelay?.enabled) fxChain.push(pingPongDelay);
-        if (track.fx?.reverb?.enabled) fxChain.push(reverb);
-        fxChain.push(channel);
-
-        // Connect FX elements in serial
-        for (let i = 0; i < fxChain.length - 1; i++) {
-          fxChain[i].connect(fxChain[i + 1]);
-        }
-
-        channel.volume.value = track.volume ?? 0;
-        channel.pan.value = track.pan ?? 0;
-
-        if (options?.onlyTrackId) {
-          channel.mute = track.id !== options.onlyTrackId;
-        } else {
-          channel.mute = track.muted;
-        }
-
-        channel.solo = options?.onlyTrackId ? false : track.soloed;
-
-        let synth: any = null;
-        if (track.type === "midi") {
-          synth = this.createSynth(track.synthType);
-          try {
-            if (track.portamento !== undefined) {
-              synth.portamento = track.portamento;
-            }
-          } catch (e) {}
-
-          const eqSeriesStart = track.fx?.graphicEQ?.enabled ? graphicEQFilters[0] : eq;
-          synth.connect(eqSeriesStart);
-        }
-
-        const inputNode = track.fx?.graphicEQ?.enabled ? graphicEQFilters[0] : eq;
-        trackOfflineInputNodeMap.set(track.id, inputNode);
-
-        offlineContexts.set(track.id, {
-          channel,
-          eq,
-          compressor,
-          pitchShift,
-          chorus,
-          delay,
-          reverb,
-          distortion,
-          phaser,
-          tremolo,
-          gate,
-          highpass,
-          lowpass,
-          bandpass,
-          bitcrusher,
-          pingPongDelay,
-          voicePitcher,
-          graphicEQFilters,
-          synth,
-          players: new Map(),
-        });
-      });
-
-      // Group Routing & Master Headroom routing for Offline Export
-      state.tracks.forEach((track) => {
-        const ctx = offlineContexts.get(track.id);
-        if (!ctx) return;
-
-        const parentGroup = track.groupId && track.groupId !== track.id 
-          ? state.tracks.find(t => t.id === track.groupId) 
-          : null;
-        const groupCtx = parentGroup && parentGroup.type === 'group' 
-          ? offlineContexts.get(parentGroup.id) 
-          : null;
-
-        if (groupCtx) {
-          const groupInputNode = trackOfflineInputNodeMap.get(parentGroup!.id) || groupCtx.eq;
-          ctx.channel.connect(groupInputNode);
-        } else {
-          ctx.channel.connect(masterHeadroom);
-        }
-      });
-
-      Object.values(state.clips || {}).forEach((clip) => {
-        if (options?.onlyTrackId && clip.trackId !== options.onlyTrackId) return;
-        const track = state.tracks.find((t) => t.id === clip.trackId);
-        const ctx = offlineContexts.get(clip.trackId);
-        if (!track || !ctx) return;
-
-        const trackInputNode = trackOfflineInputNodeMap.get(clip.trackId) || ctx.eq;
-
-        if (track.type === "midi" && ctx.synth) {
-          const muteVelocity = clip.muted ? 0 : 1;
-          const speed = Math.max(0.01, Number(clip.speed) || 1);
-          const baseNotes = clip.notes || [];
-          let maxNoteEnd = 0;
-          baseNotes.forEach(n => {
-              if (n.startTime + n.duration > maxNoteEnd) maxNoteEnd = n.startTime + n.duration;
-          });
-          const calculatedPatternLength = Math.max(1, Math.ceil(maxNoteEnd / 4) * 4);
-          const loopLength = Math.max(0.01, Number(clip.loopLength) || calculatedPatternLength);
-
-          const totalDuration = Math.max(0.01, Number(clip.duration) || 1);
-          const clipOffset = Number(clip.audioOffset) || 0;
-          
-          baseNotes.forEach((note) => {
-            if (track.muted) return;
-            
-            const safeLoopLength = loopLength > 0 ? loopLength : 4;
-            for (let offset = 0; offset < totalDuration + clipOffset; offset += safeLoopLength) {
-              const rawStart = note.startTime + offset - clipOffset;
-              const end = rawStart + note.duration;
-              
-              if (rawStart >= totalDuration) break;
-              if (end <= 0) continue;
-              
-              const clippedStart = Math.max(0, rawStart);
-              const trimLeft = clippedStart - rawStart;
-              
-              const remaining = totalDuration - clippedStart;
-              const clippedDuration = Math.min(note.duration - trimLeft, remaining);
-              
-              if (clippedDuration <= 0) continue;
-              
-              const absoluteStart16ths = (Number(clip.startTime) || 0) + (clippedStart / speed);
-              const absoluteDuration16ths = clippedDuration / speed;
-              
-              const startSecs = absoluteStart16ths * oneSixteenthSecs;
-              const durationSecs = absoluteDuration16ths * oneSixteenthSecs;
-              const velocity = Math.min(1, Math.max(0, (note.velocity ?? 0.8) * muteVelocity * (1 + (clip.gain || 0) / 20)));
-              
-              if (velocity > 0 && durationSecs > 0) {
-                try {
-                  ctx.synth.triggerAttackRelease(note.note, durationSecs, startSecs, velocity);
-                } catch(e) {
-                  console.warn("Offline rendering scheduling error", e);
-                }
-              }
-            }
-          });
-        } else if (track.type === "audio" && clip.audioUrl) {
-          const buffer = clipBufferMap.get(clip.id);
-          if (buffer && !track.muted && !clip.muted) {
-            let rate = Math.max(0.01, Number(clip.speed) || 1);
-            if (clip.originalBpm) {
-              const safeOrigBpm = Math.max(1, Number(clip.originalBpm) || 120);
-              const safeBpmFromState = Math.max(1, Number(state.bpm) || 120);
-              rate = rate * (safeBpmFromState / safeOrigBpm);
-            }
-
-            let playerOutNode: Tone.ToneAudioNode = trackInputNode;
-            const pcSettings = track?.fx?.pitchCorrection;
-            const isPcEnabled = pcSettings?.enabled ?? false;
-
-            if (clip.vocalNotes && clip.vocalNotes.length > 0 && isPcEnabled) {
-              const clipPitchShift = new Tone.PitchShift({ windowSize: 0.15 }).connect(trackInputNode);
-              playerOutNode = clipPitchShift;
-
-              const pcAmount = pcSettings?.amount ?? 100;
-              const pcSpeed = pcSettings?.speed ?? 100;
-              const pcScale = pcSettings?.scale || 'Chromatic';
-              
-              const projectKey = state.projectKey || 'C';
-              const scaleOffsets: Record<string, number[]> = {
-                'Chromatic': [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11],
-                'Major': [0, 2, 4, 5, 7, 9, 11],
-                'Minor': [0, 2, 3, 5, 7, 8, 10],
-                'Pentatonic': [0, 2, 4, 7, 9]
-              };
-              const activeScale = scaleOffsets[pcScale] || scaleOffsets['Chromatic'];
-              const noteNames = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"];
-              const rootIdx = noteNames.indexOf(projectKey.replace(/m$/, ''));
-              const allowedNotes = activeScale.map(o => (rootIdx + o) % 12);
-
-              const events = clip.vocalNotes.flatMap(vn => {
-                let targetMidi = vn.midi;
-                if (isPcEnabled) {
-                  const origNote = Math.round(vn.originalMidi);
-                  let nearest = origNote;
-                  let minDist = 999;
-                  for (let i = origNote - 12; i <= origNote + 12; i++) {
-                    if (allowedNotes.includes(((i % 12) + 12) % 12)) {
-                      const dist = Math.abs(i - vn.originalMidi);
-                      if (dist < minDist) {
-                        minDist = dist;
-                        nearest = i;
-                      }
-                    }
-                  }
-                  const shiftAmount = nearest - vn.originalMidi;
-                  targetMidi = vn.originalMidi + (shiftAmount * (pcAmount / 100));
-                }
-
-                if (isPcEnabled && vn.pitchCurve && vn.pitchCurve.length > 0) {
-                  const noteDurSeconds = (vn.duration / rate) * oneSixteenthSecs;
-                  const timePerPoint = noteDurSeconds / vn.pitchCurve.length;
-                  const noteStartSeconds = (clip.startTime + vn.startTime / rate) * oneSixteenthSecs;
-                  const alpha = pcSpeed === 100 ? 1.0 : (pcSpeed / 100) * 0.3;
-                  let currentShift = 0;
-
-                  return vn.pitchCurve.map((curveMidi, idx) => {
-                    if (curveMidi <= 0) {
-                      return {
-                        time: noteStartSeconds + (idx * timePerPoint),
-                        pitch: currentShift
-                      };
-                    }
-                    const rawShift = targetMidi - curveMidi;
-                    const wantedShift = rawShift * (pcAmount / 100);
-                    currentShift = currentShift + alpha * (wantedShift - currentShift);
-                    return {
-                      time: noteStartSeconds + (idx * timePerPoint),
-                      pitch: currentShift
-                    };
-                  });
-                } else {
-                  return [{
-                    time: (clip.startTime + vn.startTime / rate) * oneSixteenthSecs,
-                    pitch: targetMidi - vn.originalMidi
-                  }];
-                }
-              });
-
-              clip.vocalNotes.forEach(vn => {
-                events.push({
-                  time: (clip.startTime + (vn.startTime + vn.duration) / rate) * oneSixteenthSecs,
-                  pitch: 0
-                });
-              });
-
-              events.sort((a, b) => a.time - b.time);
-
-              const part = new Tone.Part((time, value) => {
-                clipPitchShift.pitch = value.pitch;
-              }, events);
-              part.start(0);
-            }
-
-            const player = new Tone.Player({
-              url: buffer,
-              loop: false,
-              fadeIn: clip.fadeIn || 0,
-              fadeOut: clip.fadeOut || 0,
-              playbackRate: rate,
-              volume: clip.gain || 0,
-            }).connect(playerOutNode);
-            
-            let offsetSecs = Math.max(0, (clip.audioOffset || 0) * oneSixteenthSecs);
-            const clipDuration = Math.max(0.01, Number(clip.duration) || 0.01);
-            const actualDuration16ths = clipDuration / rate;
-            let durationSecs = actualDuration16ths * oneSixteenthSecs;
-            const startContextTime = (Number(clip.startTime) || 0) * oneSixteenthSecs;
-            
-            const loopLength16ths = (Math.max(0.01, Number(clip.loopLength) || clipDuration)) / rate;
-            let loopEndSecs = loopLength16ths * oneSixteenthSecs;
-
-            if (player.buffer && player.buffer.loaded && player.buffer.duration > 0) {
-              if (offsetSecs >= player.buffer.duration) offsetSecs = Math.max(0, player.buffer.duration - 0.01);
-              if (loopEndSecs > player.buffer.duration) loopEndSecs = player.buffer.duration;
-              
-              player.loop = loopLength16ths < actualDuration16ths;
-              if (!player.loop) {
-                const maxDuration = Math.max(0, player.buffer.duration - offsetSecs - 0.01);
-                if (durationSecs > maxDuration) {
-                  durationSecs = maxDuration;
-                }
-              }
-            } else {
-              player.loop = loopLength16ths < actualDuration16ths;
-            }
-
-            if (player.loop) {
-              player.loopStart = 0;
-              player.loopEnd = Math.max(0.01, loopEndSecs);
-            }
-
-            if (durationSecs > 0) {
-              player.start(startContextTime, offsetSecs, durationSecs);
-            }
-          }
-        }
-      });
-
-      Tone.Transport.start(0);
-    }, renderDuration).then(async (buffer) => {
-      // buffer is an AudioBuffer instance
-      if (useDawStore.getState().isExportCancelled) {
-        throw new Error("Export aborted by user");
-      }
-
-      const rawBuffer = (buffer && typeof (buffer as any).get === 'function') ? (buffer as any).get() : buffer;
-      const store = useDawStore.getState();
-
-      const blob = await encodeWavInWorker(rawBuffer, (progress) => {
-        store.setIsExporting(true, progress, "Encoding to target audio codec, wrapping audio blocks...", 1);
-      });
-
-      return {
-        url: URL.createObjectURL(blob),
-        blob
-      };
-    });
   }
 
   destroy() {

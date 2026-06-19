@@ -46,3 +46,45 @@ export function apiUrl(path: string): string {
   const p = path.startsWith("/") ? path : `/${path}`;
   return `${getApiBaseUrl()}${p}`;
 }
+
+/**
+ * Drop-in fetch wrapper for all /api/* calls.
+ *
+ * Detects the "Unexpected token '<'" failure mode that occurs when a missing
+ * server route falls through to the SPA shell and returns index.html instead
+ * of JSON.  Throws a human-readable error before JSON.parse ever runs,
+ * rather than surfacing a cryptic syntax error to the user.
+ */
+export async function apiFetch(path: string, init?: RequestInit): Promise<Response> {
+  const url = apiUrl(path);
+  const res = await fetch(url, init);
+
+  // Surface non-2xx errors with a readable message before callers try to parse the body.
+  if (!res.ok) {
+    const ct = res.headers.get("content-type") || "";
+    let detail = "";
+    try {
+      if (ct.includes("application/json")) {
+        const j = await res.clone().json();
+        detail = j?.error || JSON.stringify(j);
+      } else {
+        // Likely the SPA shell (text/html) — grab the first 200 chars for context.
+        detail = (await res.clone().text()).slice(0, 200);
+      }
+    } catch (_) {}
+    throw new Error(`API request to ${path} failed (${res.status})${detail ? `: ${detail}` : ""}`);
+  }
+
+  // Even on 200 OK, if the server sent back HTML it means the route isn't registered.
+  const contentType = res.headers.get("content-type") || "";
+  if (contentType.includes("text/html")) {
+    const preview = (await res.clone().text()).slice(0, 200);
+    throw new Error(
+      `API route "${path}" is not registered on the server — received HTML (SPA shell) instead of JSON.\n` +
+      `First bytes: ${preview}\n` +
+      `Check that a TanStack server route exists at src/routes${path.replace(/\./g, "/")}.ts`
+    );
+  }
+
+  return res;
+}

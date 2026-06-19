@@ -221,6 +221,7 @@ const pitchWorkletUrl = URL.createObjectURL(pitchBlob);
 const autotuneWorkletUrl = URL.createObjectURL(autotuneBlob);
 
 import * as Tone from 'tone';
+import { KEYS_LIST, SCALES } from '../../lib/scales';
 
 export class VocalPipeline {
   private nativeContext: AudioContext;
@@ -237,7 +238,8 @@ export class VocalPipeline {
   // Autotune Settings
   public autotuneEnabled = true;
   public retuneSpeed = 50; // 0 (slow) to 100 (fast)
-  public scale: string[] = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B']; 
+  public key: string = 'C';
+  public scaleType: string = 'Chromatic';
   private allowedMidiNotes: number[] = [];
 
   constructor() {
@@ -258,14 +260,26 @@ export class VocalPipeline {
   }
 
   public setScale(key: string, scaleType: string) {
-     this.scale = [key]; 
+     this.key = key;
+     this.scaleType = scaleType;
      this.generateAllowedNotes();
   }
 
   private generateAllowedNotes() {
     this.allowedMidiNotes = [];
-    for (let i = 20; i < 100; i++) {
-       this.allowedMidiNotes.push(i);
+    const rootIndex = KEYS_LIST.indexOf(this.key ?? 'C');
+    const intervals = SCALES[(this.scaleType ?? 'Chromatic') as keyof typeof SCALES] ?? SCALES['Chromatic'];
+    // Build the set of pitch-class semitones that belong to this scale
+    const pitchClasses = new Set(intervals.map(i => (rootIndex + i) % 12));
+    // Expand across the MIDI range used by the autotune worklet (20–100)
+    for (let midi = 20; midi < 100; midi++) {
+      if (pitchClasses.has(midi % 12)) {
+        this.allowedMidiNotes.push(midi);
+      }
+    }
+    // Push current allowed list to the worklet if already initialised
+    if (this.autotuneNode) {
+      this.autotuneNode.port.postMessage({ type: 'setAllowedNotes', notes: this.allowedMidiNotes });
     }
   }
 

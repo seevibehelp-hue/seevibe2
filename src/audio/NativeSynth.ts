@@ -1,21 +1,32 @@
 // @ts-nocheck
-export function createNoiseBuffer(ctx: AudioContext) {
-  const bufferSize = ctx.sampleRate * 2;
-  const buffer = ctx.createBuffer(1, bufferSize, ctx.sampleRate);
-  const data = buffer.getChannelData(0);
-  for (let i = 0; i < bufferSize; i++) {
-    data[i] = Math.random() * 2 - 1;
-  }
-  return buffer;
-}
 
 export class NativeSynth {
   ctx: AudioContext;
   destination: AudioNode;
+  // Cached 2-second noise buffer — allocated once in the constructor and
+  // reused for every snare/hihat hit to avoid per-hit GC pressure on the
+  // audio thread (mirrors the lowLatencySynth.getCachedNoiseBuf pattern).
+  private _noiseBuffer: AudioBuffer | null = null;
 
   constructor(ctx: AudioContext, destination: AudioNode) {
     this.ctx = ctx;
     this.destination = destination;
+    this._buildNoiseBuffer();
+  }
+
+  private _buildNoiseBuffer() {
+    const bufferSize = this.ctx.sampleRate * 2;
+    const buffer = this.ctx.createBuffer(1, bufferSize, this.ctx.sampleRate);
+    const data = buffer.getChannelData(0);
+    for (let i = 0; i < bufferSize; i++) {
+      data[i] = Math.random() * 2 - 1;
+    }
+    this._noiseBuffer = buffer;
+  }
+
+  private getNoiseBuffer(): AudioBuffer {
+    if (!this._noiseBuffer) this._buildNoiseBuffer();
+    return this._noiseBuffer!;
   }
 
   playDrum(type: string, time: number, velocity: number) {
@@ -36,7 +47,7 @@ export class NativeSynth {
       osc.start(time);
       osc.stop(time + 0.5);
     } else if (type === 'snare') {
-      const noiseBuffer = createNoiseBuffer(this.ctx);
+      const noiseBuffer = this.getNoiseBuffer();
       const noise = this.ctx.createBufferSource();
       noise.buffer = noiseBuffer;
       const noiseFilter = this.ctx.createBiquadFilter();
@@ -58,7 +69,7 @@ export class NativeSynth {
       osc.stop(time + 0.2);
       noise.stop(time + 0.2);
     } else if (type === 'hihat' || type === 'hihat_o') {
-      const noiseBuffer = createNoiseBuffer(this.ctx);
+      const noiseBuffer = this.getNoiseBuffer();
       const noise = this.ctx.createBufferSource();
       noise.buffer = noiseBuffer;
       
