@@ -213,13 +213,18 @@ export const stopAllLowLatencyVoices = () => {
     
     activeVoices.forEach((v) => {
       try {
-        v.env.gain.cancelScheduledValues(now);
-        v.env.gain.setValueAtTime(v.env.gain.value, now);
+        // Mirror the cancelAndHoldAtTime pattern from stopLowLatencySynth to
+        // avoid the click caused by cancelScheduledValues dropping to a stale value.
+        if (typeof v.env.gain.cancelAndHoldAtTime === 'function') {
+          v.env.gain.cancelAndHoldAtTime(now);
+        } else {
+          const snapshot = Math.max(0.0001, v.env.gain.value);
+          v.env.gain.cancelScheduledValues(now);
+          v.env.gain.setValueAtTime(snapshot, now);
+        }
         v.env.gain.linearRampToValueAtTime(0, now + 0.05);
         v.osc1.stop(now + 0.07);
-        if (v.osc2) {
-          v.osc2.stop(now + 0.07);
-        }
+        if (v.osc2) v.osc2.stop(now + 0.07);
       } catch (e) {}
     });
     activeVoices.clear();

@@ -378,4 +378,15 @@ export class VocalPipeline {
   public getOutputStream() {
     return this.outputStream;
   }
+
+  public dispose() {
+    try { this.pitchNode?.disconnect(); this.pitchNode = null; } catch (_) {}
+    try { this.autotuneNode?.disconnect(); this.autotuneNode = null; } catch (_) {}
+    try { this.inputNode?.disconnect(); this.inputNode = null; } catch (_) {}
+    // Revoke the object-URLs created for the worklet Blobs so the browser
+    // can free the underlying memory. Without this they leak for the lifetime
+    // of the page (the spec requires explicit revocation).
+    try { URL.revokeObjectURL(pitchWorkletUrl); } catch (_) {}
+    try { URL.revokeObjectURL(autotuneWorkletUrl); } catch (_) {}
+  }
 }

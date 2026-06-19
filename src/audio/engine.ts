@@ -231,8 +231,13 @@ interface TrackContext {
   synthType?: SynthType;
   channel: Tone.Channel;
   eq: Tone.EQ3;
+  // Per-track reverb/delay kept for compatibility but replaced by send levels
+  // to the shared return buses (see AudioEngine.sharedReverb / sharedDelay).
   reverb: Tone.Freeverb;
   delay: Tone.FeedbackDelay;
+  // Send gain nodes to the shared return buses
+  reverbSend?: Tone.Gain;
+  delaySend?: Tone.Gain;
   compressor: Tone.Compressor;
   pitchShift: Tone.PitchShift;
   chorus: Tone.Chorus;
@@ -396,139 +401,6 @@ class DrumVoice {
   }
 }
 
-class DrumKitSynth {
-  public disposed = false;
-  private voices: DrumVoice[] = [];
-  private voiceIndex = 0;
-
-  constructor() {
-    for (let i = 0; i < 4; i++) {
-      this.voices.push(new DrumVoice());
-    }
-  }
-
-  connect(destination: any) {
-    this.voices.forEach((v) => v.connect(destination));
-    return this;
-  }
-
-  toDestination() {
-    this.voices.forEach((v) => v.toDestination());
-    return this;
-  }
-
-  dispose() {
-    this.voices.forEach((v) => v.dispose());
-    this.disposed = true;
-  }
-
-  triggerAttackRelease(
-    note: string | string[],
-    duration: string | number,
-    time?: any,
-    velocity?: number,
-  ) {
-    this.triggerAttack(note, time, velocity);
-  }
-
-  triggerAttack(note: string | string[], time?: any, velocity?: number) {
-    if (Array.isArray(note)) {
-      note.forEach((n) => this.triggerSingle(n, time, velocity));
-    } else {
-      this.triggerSingle(note, time, velocity);
-    }
-  }
-
-  triggerSingle(n: string, time?: any, velocity?: number) {
-    const v = this.voices[this.voiceIndex];
-    this.voiceIndex = (this.voiceIndex + 1) % this.voices.length;
-
-    let pc = "C";
-    let octave = 4;
-
-    // Parse note safely
-    const match = n.match(/^([A-Ga-g]#?)(\d*)$/);
-    if (match) {
-      pc = match[1].toUpperCase();
-      octave = match[2] ? parseInt(match[2], 10) : 4;
-    }
-
-    let safeVelocity = Math.min(1, Math.max(0, velocity ?? 0.8));
-    if (isNaN(safeVelocity) || !isFinite(safeVelocity)) safeVelocity = 0.8;
-
-    const fullNote = `${pc}${octave}`;
-
-    switch (fullNote) {
-      case "C4":
-      case "C#4":
-        v.kick.triggerAttackRelease("C2", "8n", time, safeVelocity);
-        break;
-      case "D4":
-      case "D#4":
-        v.snare.triggerAttackRelease("16n", time, safeVelocity);
-        v.snareTone.triggerAttackRelease("G3", "16n", time, safeVelocity);
-        break;
-      case "E4":
-        v.clap.triggerAttackRelease("16n", time, safeVelocity);
-        break;
-      case "F4":
-      case "F#4":
-        v.hat.triggerAttackRelease("32n", time, safeVelocity);
-        break;
-      case "G4":
-      case "G#4":
-        v.hat.triggerAttackRelease("4n", time, safeVelocity);
-        break;
-      case "A4":
-      case "A#4":
-        v.crash.triggerAttackRelease("4n", time, safeVelocity);
-        break;
-      case "B4":
-        v.tom.triggerAttackRelease("G2", "8n", time, safeVelocity);
-        break;
-      case "C5":
-        v.tom.triggerAttackRelease("C3", "8n", time, Math.max(0.1, safeVelocity - 0.2));
-        break;
-      case "D5":
-        v.cowbell.triggerAttackRelease("8n", time, safeVelocity);
-        break;
-      case "E5":
-      case "F5":
-        v.fx.triggerAttackRelease("C5", "16n", time, safeVelocity);
-        break;
-      case "G5":
-      case "A5":
-      case "B5":
-        v.tom.triggerAttackRelease("A3", "8n", time, safeVelocity);
-        break;
-      case "C6":
-        v.kick.triggerAttackRelease("C3", "8n", time, safeVelocity);
-        break;
-      case "D6":
-        v.snare.triggerAttackRelease("16n", time, safeVelocity);
-        v.snareTone.triggerAttackRelease("C4", "16n", time, safeVelocity);
-        break;
-      default:
-        // Fallback mapping for generic MIDI
-        if (pc === "C" || pc === "C#") v.kick.triggerAttackRelease(octave > 4 ? "C3" : "C2", "8n", time, safeVelocity);
-        else if (pc === "D" || pc === "D#") {
-          v.snare.triggerAttackRelease("16n", time, safeVelocity);
-          v.snareTone.triggerAttackRelease("G3", "16n", time, safeVelocity);
-        }
-        else if (pc === "E") v.clap.triggerAttackRelease("16n", time, safeVelocity);
-        else if (pc === "F" || pc === "F#") v.hat.triggerAttackRelease(octave > 4 ? "16n" : "32n", time, safeVelocity);
-        else if (pc === "G" || pc === "G#") v.hat.triggerAttackRelease("4n", time, safeVelocity);
-        else if (pc === "A" || pc === "A#") v.crash.triggerAttackRelease("4n", time, safeVelocity);
-        else v.tom.triggerAttackRelease(`${pc}${Math.max(1, octave - 2)}`, "8n", time, safeVelocity);
-        break;
-    }
-  }
-
-  triggerRelease() {}
-
-  releaseAll() {}
-}
-
 class ReferenceDrumKitSynth {
   public disposed = false;
   private destination: AudioNode | null = null;
@@ -580,8 +452,14 @@ class AudioEngine {
   private micChannel: Tone.Channel;
   public masterHeadroom: Tone.Volume;
   public masterCompressor: Tone.Compressor;
-  public masterMaximizer: Tone.Volume;
+  public masterTrim: Tone.Volume;
   public masterLimiter: Tone.Limiter;
+
+  // Shared return buses — every track sends to these instead of instantiating
+  // its own reverb/delay.  Wet=0 tracks cost nothing; per-track instances cost
+  // CPU even when bypassed.
+  public sharedReverb: Tone.Freeverb;
+  public sharedDelay: Tone.FeedbackDelay;
   public pitchAnalyser: Tone.Analyser;
 
   private unsubscribe: (() => void) | null = null;
@@ -623,11 +501,19 @@ class AudioEngine {
     });
 
     // Keep a small safety trim in real-time to avoid speaker-tear artifacts on mobile.
-    this.masterMaximizer = new Tone.Volume(-1.3);
+    this.masterTrim = new Tone.Volume(-1.3) // safety trim (was misnamed masterMaximizer);
     
     this.masterHeadroom.connect(this.masterCompressor);
-    this.masterCompressor.connect(this.masterMaximizer);
-    this.masterMaximizer.connect(this.masterLimiter);
+    this.masterCompressor.connect(this.masterTrim);
+    this.masterTrim.connect(this.masterLimiter);
+
+    // Shared return buses — instantiated once, shared across all tracks.
+    // Default settings match what each track was instantiating individually.
+    this.sharedReverb = new Tone.Freeverb({ roomSize: 0.7, dampening: 3000, wet: 1 });
+    this.sharedReverb.connect(this.masterHeadroom);
+
+    this.sharedDelay = new Tone.FeedbackDelay({ delayTime: '8n', feedback: 0.3, wet: 1 });
+    this.sharedDelay.connect(this.masterHeadroom);
     
     this.recorder = new Tone.Recorder();
     this.meter = new Tone.Meter();
@@ -842,12 +728,22 @@ class AudioEngine {
     if (this.initPromise) return this.initPromise;
 
     this.initPromise = (async () => {
+      // Create the AudioContext with a low-latency hint before Tone.start() so the
+      // browser picks the smallest feasible buffer size (typically 256 samples on
+      // desktop, ~512 on mobile) instead of the default "balanced" ~100 ms.
+      try {
+        const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
+        if (AudioCtx) {
+          const ctx = new AudioCtx({ latencyHint: 'interactive', sampleRate: 44100 });
+          Tone.setContext(ctx);
+        }
+      } catch (_) {}
+
       await Tone.start();
       console.log("Audio Engine Started");
 
-      // 100ms lookahead: enough buffer to prevent scheduling underruns on mobile
-      // without introducing perceptible latency at normal BPMs.
-      Tone.getContext().lookAhead = 0.1;
+      // Start with a conservative lookahead; tightened dynamically for live input.
+      Tone.getContext().lookAhead = 0.05;
 
       try {
         await preloadOfflineDrums();
@@ -861,7 +757,7 @@ class AudioEngine {
       Tone.Transport.loopStart = 0;
       Tone.Transport.loopEnd = "4m";
 
-      Tone.Transport.scheduleRepeat(() => {
+      Tone.Transport.scheduleRepeat((time) => {
         const state = useDawStore.getState();
         if (state.playbackState === "playing") {
           const currentPos = Tone.Transport.ticks / 48;
@@ -902,10 +798,11 @@ class AudioEngine {
                   const ratio = track.fx.sidechain.ratio ?? 4;
                   // Ratio controls the depth of sidechain ducking (-3dB to -24dB)
                   const duckAmt = Math.min(24, Math.max(3, ratio * 3));
-                  ctx.channel.volume.setValueAtTime(baseVol - duckAmt, Tone.immediate());
+                  // Use the scheduler `time` arg for sample-accurate ducking
+                  ctx.channel.volume.setValueAtTime(baseVol - duckAmt, time);
                   // Glide/ramp volume back to original fader level over release seconds
                   const releaseTime = track.fx.sidechain.release ?? 0.12;
-                  ctx.channel.volume.rampTo(baseVol, releaseTime, Tone.immediate() + 0.04);
+                  ctx.channel.volume.rampTo(baseVol, releaseTime, time + 0.04);
                 }
               }
             }
@@ -949,10 +846,10 @@ class AudioEngine {
                 const shouldMute = (current16th % 3 === 0);
                 if (ctx.channel) {
                   if (shouldMute) {
-                    ctx.channel.volume.setValueAtTime(-99, Tone.immediate());
+                    ctx.channel.volume.setValueAtTime(-99, time);
                   } else {
                     const baseVol = track.volume ?? 0;
-                    ctx.channel.volume.setValueAtTime(baseVol, Tone.immediate());
+                    ctx.channel.volume.setValueAtTime(baseVol, time);
                   }
                 }
               } else if (mode === 'custom') {
@@ -962,7 +859,7 @@ class AudioEngine {
                   const baseVol = track.volume ?? 0;
                   // Map curveVal (0.0 to 1.0) to decibel ducking (down to -80dB)
                   const targetVol = curveVal <= 0.05 ? -99 : Math.max(-99, baseVol + 20 * Math.log10(curveVal));
-                  ctx.channel.volume.setValueAtTime(targetVol, Tone.immediate());
+                  ctx.channel.volume.setValueAtTime(targetVol, time);
                 }
                 
                 if (ctx.pitchShift) {
@@ -1018,7 +915,7 @@ class AudioEngine {
                   // Duck volume relative to peak input (custom sidechain pumping effect)
                   const baseVol = track.volume ?? 0;
                   const duckAmountDb = modVal * -24; // duck up to -24dB at max peaks
-                  ctx.channel.volume.setValueAtTime(baseVol + duckAmountDb, Tone.immediate());
+                  ctx.channel.volume.setValueAtTime(baseVol + duckAmountDb, time);
                 }
               }
             }
@@ -1632,9 +1529,14 @@ class AudioEngine {
         };
         break;
     }
+    // Sustained pads/strings/brass can hold many notes simultaneously; a cap of
+    // 8 voices means 8× peak summing which overloads the limiter.  Use 4–6 voices
+    // for those instruments and lean on oldest-voice stealing for the rest.
+    const padTypes: SynthType[] = ['pad', 'strings', 'brass', 'rhodes', 'organ'];
+    const maxPolyphony = padTypes.includes(type) ? 4 : 6;
     return new Tone.PolySynth(
       voice,
-      Object.assign({}, synthProps, { maxPolyphony: 8 }),
+      Object.assign({}, synthProps, { maxPolyphony }),
     );
   }
 
@@ -1684,6 +1586,16 @@ class AudioEngine {
     compressor.connect(channel);
     channel.connect(meter);
 
+    // Send nodes to shared return buses — start at gain 0 (dry).
+    // syncToneWithState drives them via rampTo based on the track FX settings.
+    const reverbSend = new Tone.Gain(0);
+    reverbSend.connect(this.sharedReverb);
+    channel.connect(reverbSend);
+
+    const delaySend = new Tone.Gain(0);
+    delaySend.connect(this.sharedDelay);
+    channel.connect(delaySend);
+
     const ctx: TrackContext = {
       channel,
       eq,
@@ -1692,6 +1604,8 @@ class AudioEngine {
       chorus,
       delay,
       reverb,
+      reverbSend,
+      delaySend,
       players: new Map(),
       synthType: track.synthType,
       meter,
@@ -1731,6 +1645,9 @@ class AudioEngine {
       state.playbackState === "playing" &&
       Tone.Transport.state !== "started"
     ) {
+      // Tighten lookahead for timeline playback — 50 ms is enough scheduling buffer
+      // without the 100 ms lag that the old fixed value imposed.
+      Tone.getContext().lookAhead = 0.05;
       Tone.Transport.start("+0.05");
     } else if (
       state.playbackState === "paused" &&
@@ -1742,6 +1659,8 @@ class AudioEngine {
       state.playbackState === "stopped" &&
       Tone.Transport.state !== "stopped"
     ) {
+      // Tighten lookahead when stopped so live pads/MIDI feel immediate.
+      Tone.getContext().lookAhead = 0.01;
       Tone.Transport.stop();
       this.releaseAllNotes();
     }
@@ -1889,16 +1808,23 @@ class AudioEngine {
         ? (track.fx.chorus.wet ?? 0.5)
         : 0, 0.01);
 
-      ctx.delay.wet.rampTo(track.fx?.delay?.enabled
-        ? (track.fx.delay.mix ?? 0.2)
-        : 0, 0.01);
-      if (track.fx?.delay) {
-        ctx.delay.feedback.rampTo(Math.min(0.95, track.fx.delay.feedback ?? 0.3), 0.01);
-        try { ctx.delay.delayTime.value = track.fx.delay.time ?? '8n'; } catch (_) {}
+      // Route through shared return buses via send-level gain nodes.
+      // The per-track delay/reverb instances are kept as fallback but their wet
+      // stays 0 — all signal flows through the shared buses.
+      if (ctx.delaySend) {
+        ctx.delaySend.gain.rampTo(track.fx?.delay?.enabled
+          ? (track.fx.delay.mix ?? 0.2)
+          : 0, 0.01);
       }
-      ctx.reverb.wet.rampTo(track.fx?.reverb?.enabled
-        ? (track.fx.reverb.mix ?? 0.3)
-        : 0, 0.01);
+      if (track.fx?.delay) {
+        this.sharedDelay.feedback.rampTo(Math.min(0.95, track.fx.delay.feedback ?? 0.3), 0.01);
+        try { this.sharedDelay.delayTime.value = track.fx.delay.time ?? '8n'; } catch (_) {}
+      }
+      if (ctx.reverbSend) {
+        ctx.reverbSend.gain.rampTo(track.fx?.reverb?.enabled
+          ? (track.fx.reverb.mix ?? 0.3)
+          : 0, 0.01);
+      }
       // Sync roomSize from decay slider (0.1–10s → 0.01–0.98 normalised)
       if (track.fx?.reverb) {
         ctx.reverb.roomSize.rampTo(Math.min(0.98, (track.fx.reverb.decay ?? 1.5) / 10.2), 0.01);
@@ -2093,12 +2019,17 @@ class AudioEngine {
       if (track.type === "midi" && ctx.synth) {
         const baseNotes = (clip.notes || []).filter(note => !note.isRecording);
         
-        // Skip rebuilding MIDI Part if notes, position, speed, loop settings, mute status, and BPM did not change
+        // Skip rebuilding MIDI Part if notes, position, speed, loop settings, mute status, and BPM did not change.
+        // Use notesRevision (an integer counter) instead of JSON.stringify for O(1) comparison.
         let part = this.parts.get(clip.id);
-        const prevNotes = prevClip ? (prevClip.notes || []).filter(note => !note.isRecording) : [];
         const notesSame = prevClip &&
-                          baseNotes.length === prevNotes.length &&
-                          JSON.stringify(baseNotes) === JSON.stringify(prevNotes);
+                          clip.notesRevision !== undefined
+                            ? clip.notesRevision === prevClip.notesRevision
+                            : (() => {
+                                const prevNotes = (prevClip.notes || []).filter(note => !note.isRecording);
+                                return baseNotes.length === prevNotes.length &&
+                                       JSON.stringify(baseNotes) === JSON.stringify(prevNotes);
+                              })();
         const paramsSame = prevClip &&
                            prevClip.startTime === clip.startTime &&
                            prevClip.duration === clip.duration &&
@@ -2628,7 +2559,8 @@ class AudioEngine {
 
       const { stretchAudioBuffer } = await import("./WarpEngine");
       const audioContext = Tone.context.rawContext as AudioContext;
-      const stretched = stretchAudioBuffer(audioContext, originalBuffer, ratio);
+      // stretchAudioBuffer now runs in a Web Worker — must be awaited
+      const stretched = await stretchAudioBuffer(audioContext, originalBuffer, ratio);
 
       const ctx = this.trackContexts.get(trackId);
       if (ctx) {
@@ -3316,10 +3248,14 @@ class AudioEngine {
       ctx.pitchShift.dispose();
       ctx.delay.dispose();
       ctx.reverb.dispose();
+      ctx.reverbSend?.dispose();
+      ctx.delaySend?.dispose();
       ctx.channel.dispose();
       ctx.players.forEach((p) => p.dispose());
     });
     this.parts.forEach((p) => p.dispose());
+    this.sharedReverb?.dispose();
+    this.sharedDelay?.dispose();
   }
 }
 

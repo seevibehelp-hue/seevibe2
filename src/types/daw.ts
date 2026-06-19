@@ -50,6 +50,7 @@ export interface DawClip {
   fadeOut?: number; // fade out duration
   denoised?: boolean; // flag to indicate applying denoise
   audioOffset?: number; // offset into the audio source file in 16th notes
+  notesRevision?: number; // incremented on every notes mutation — replaces JSON.stringify diff
 }
 
 export type SynthType = 'poly' | 'fm' | 'am' | 'membrane' | 'pluck' | 'flute' | 'epiano' | 'grand' | 'organ' | 'rhodes' | 'synthbass' | 'pad' | 'leadsynth' | 'strings' | 'brass' | 'bells';

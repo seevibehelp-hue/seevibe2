@@ -1,8 +1,10 @@
 // @ts-nocheck
 import { create } from 'zustand';
+import { persist } from 'zustand/middleware';
 import { temporal } from 'zundo';
 import { DawTrack, DawClip, SynthType, TrackType, AppTab, MusicStyle, TrackFX } from '../types/daw';
 import { timelineEvents } from '../utils/timelineEvents';
+import { saveAudioBlob, rehydrateAudioUrls } from '../lib/audioBlobDb';
 
 type PlaybackState = 'stopped' | 'playing' | 'paused';
 
@@ -219,7 +221,9 @@ const initialClip: DawClip = {
   ]
 };
 
-export const useDawStore = create<DawState>()(temporal((set, get) => ({
+export const useDawStore = create<DawState>()(
+  persist(
+    temporal((set, get) => ({
   bpm: 120,
   timelineZoom: 1,
   playbackState: 'stopped',
@@ -469,6 +473,13 @@ export const useDawStore = create<DawState>()(temporal((set, get) => ({
       };
     });
     timelineEvents.emit({ type: 'AddClip', trackId, clipId: id, startTime, duration: duration || 32 });
+    // Persist audio blob to IndexedDB so it survives page reloads
+    if (audioUrl && audioUrl.startsWith('blob:')) {
+      fetch(audioUrl)
+        .then(r => r.blob())
+        .then(blob => saveAudioBlob(id, blob))
+        .catch(() => {});
+    }
     return id;
   },
 
@@ -716,7 +727,8 @@ export const useDawStore = create<DawState>()(temporal((set, get) => ({
           ...clip, 
           duration: newDuration, 
           loopLength: newLoopLength,
-          notes: [...(clip.notes || []), newNote] 
+          notes: [...(clip.notes || []), newNote],
+          notesRevision: ((clip.notesRevision ?? 0) + 1),
         }
       }
     };
@@ -744,7 +756,8 @@ export const useDawStore = create<DawState>()(temporal((set, get) => ({
           ...clip,
           duration: Math.max(clip.duration, maxEnd),
           loopLength: Math.max(clip.loopLength || clip.duration, maxEnd),
-          notes: newNotes
+          notes: newNotes,
+          notesRevision: ((clip.notesRevision ?? 0) + 1),
         }
       }
     };
@@ -756,7 +769,7 @@ export const useDawStore = create<DawState>()(temporal((set, get) => ({
     return {
       clips: {
         ...state.clips,
-        [clipId]: { ...clip, notes: (clip.notes || []).filter(n => n.id !== noteId) }
+        [clipId]: { ...clip, notes: (clip.notes || []).filter(n => n.id !== noteId), notesRevision: ((clip.notesRevision ?? 0) + 1) }
       }
     };
   }),
@@ -815,4 +828,73 @@ export const useDawStore = create<DawState>()(temporal((set, get) => ({
   })),
 
   clearChat: () => set({ chatMessages: [] })
-}), { partialize: (state) => ({ tracks: state.tracks, clips: state.clips, bpm: state.bpm, masterVolume: state.masterVolume, projectKey: state.projectKey, projectScale: state.projectScale, silenceThreshold: state.silenceThreshold, purchasedPlugins: state.purchasedPlugins, globalEffectsMode: state.globalEffectsMode, deviceControlPermission: state.deviceControlPermission, deviceControlEnabled: state.deviceControlEnabled, isFloatingBallActive: state.isFloatingBallActive, speakingModeEnabled: state.speakingModeEnabled, selectedLanguage: state.selectedLanguage, accessibilityPermissionGranted: state.accessibilityPermissionGranted, inputSimulationGranted: state.inputSimulationGranted, screenOCRGranted: state.screenOCRGranted, backgroundDaemonGranted: state.backgroundDaemonGranted, shellBindingGranted: state.shellBindingGranted }) }));
+}), {
+  // zundo partialize: only diff musically meaningful state to avoid firing on
+  // every UI tick (transport position, loading flags, etc. are excluded).
+  partialize: (state) => ({
+    tracks: state.tracks,
+    clips: state.clips,
+    bpm: state.bpm,
+    masterVolume: state.masterVolume,
+    projectKey: state.projectKey,
+    projectScale: state.projectScale,
+    silenceThreshold: state.silenceThreshold,
+    purchasedPlugins: state.purchasedPlugins,
+    globalEffectsMode: state.globalEffectsMode,
+    deviceControlPermission: state.deviceControlPermission,
+    deviceControlEnabled: state.deviceControlEnabled,
+    isFloatingBallActive: state.isFloatingBallActive,
+    speakingModeEnabled: state.speakingModeEnabled,
+    selectedLanguage: state.selectedLanguage,
+    accessibilityPermissionGranted: state.accessibilityPermissionGranted,
+    inputSimulationGranted: state.inputSimulationGranted,
+    screenOCRGranted: state.screenOCRGranted,
+    backgroundDaemonGranted: state.backgroundDaemonGranted,
+    shellBindingGranted: state.shellBindingGranted,
+  })
+})),
+    {
+      // persist middleware: saves the DAW state to localStorage so tracks,
+      // clips (minus stale blob: URLs), BPM, and settings survive a reload.
+      name: 'seevibe-daw-store',
+      // Strip blob: audioUrls before serialising — they are invalid after reload.
+      // The actual audio data lives in IndexedDB (audioBlobDb.ts) and is
+      // re-hydrated in the onRehydrateStorage callback below.
+      partialize: (state: any) => ({
+        ...state,
+        clips: Object.fromEntries(
+          Object.entries(state.clips as Record<string, any>).map(([id, clip]: [string, any]) => [
+            id,
+            { ...clip, audioUrl: undefined },
+          ])
+        ),
+        // Never persist runtime-only fields
+        chatMessages: [],
+        isExporting: false,
+        exportProgress: 0,
+        playbackState: 'stopped',
+        transportPosition: 0,
+        isRecording: false,
+        recordingStart16ths: null,
+        recordingCountdown: null,
+      }),
+      onRehydrateStorage: () => async (state: any) => {
+        if (!state) return;
+        // Re-create blob: URLs from IndexedDB after reload
+        try {
+          const restored = await rehydrateAudioUrls(state.clips || {});
+          if (Object.keys(restored).length > 0) {
+            useDawStore.setState((s: any) => ({
+              clips: Object.fromEntries(
+                Object.entries(s.clips as Record<string, any>).map(([id, clip]: [string, any]) => [
+                  id,
+                  restored[id] ? { ...clip, audioUrl: restored[id] } : clip,
+                ])
+              ),
+            }));
+          }
+        } catch (_) {}
+      },
+    }
+  )
+);

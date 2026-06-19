@@ -115,7 +115,8 @@ export async function renderArrangementToWav(
   let vocalsBuffer: AudioBuffer | null = null;
   if (vocalsUrl) {
     onProgress?.("Loading vocals", 0.1);
-    const tmpCtx = new (window.OfflineAudioContext || (window as any).webkitOfflineAudioContext)(2, 44100, 44100);
+    const ctxSampleRate = Tone.getContext().sampleRate || 44100;
+    const tmpCtx = new (window.OfflineAudioContext || (window as any).webkitOfflineAudioContext)(2, ctxSampleRate, ctxSampleRate);
     vocalsBuffer = await fetchVocalBuffer(vocalsUrl, tmpCtx);
   }
 
@@ -242,7 +243,7 @@ export async function renderArrangementToWav(
       // Drop vocals after a 1-bar intro space
       src.start(secPerBar);
     }
-  }, duration, 2, 44100);
+  }, duration, 2, Tone.getContext().sampleRate || 44100);
 
   onProgress?.("Encoding WAV", 0.85);
   const wav = audioBufferToWav(rendered as unknown as AudioBuffer);

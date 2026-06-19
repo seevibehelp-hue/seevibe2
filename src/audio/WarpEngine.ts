@@ -13,71 +13,42 @@ export interface TransientPoint {
   confidence: number;
 }
 
-/**
- * Simple Waveform Similarity Overlap-Add (WSOLA) implementation
- * Stretches or squeezes an AudioBuffer by a factor of 'ratio' without altering the pitch.
- * Ratio > 1.0 Speeds up the audio (makes it shorter)
- * Ratio < 1.0 Slows down the audio (makes it longer)
- */
-export function stretchAudioBuffer(
-  audioContext: AudioContext,
-  originalBuffer: AudioBuffer,
-  ratio: number
-): AudioBuffer {
-  if (ratio === 1 || ratio <= 0 || isNaN(ratio)) {
-    return originalBuffer; // No stretching needed or invalid
-  }
+// ---------------------------------------------------------------------------
+// WSOLA Web Worker source — inlined as a Blob so no extra build artefact is
+// needed.  The worker receives transferable Float32Arrays (zero-copy) and
+// returns the stretched channel data the same way.
+// ---------------------------------------------------------------------------
+const wsolaWorkerSource = `
+self.onmessage = function(e) {
+  const { channels, inputLen, outputLen, sampleRate, ratio, windowSize, hs, ha, searchRange } = e.data;
 
-  const numChannels = originalBuffer.numberOfChannels;
-  const sampleRate = originalBuffer.sampleRate;
-  const inputLen = originalBuffer.length;
-  const outputLen = Math.round(inputLen / ratio);
-
-  // Re-create a fresh buffer with correct length
-  const stretchedBuffer = audioContext.createBuffer(numChannels, outputLen, sampleRate);
-
-  // Parameters for WSOLA
-  const windowSize = 2048; // Standard 46ms window
-  const hs = 512;          // Synthesis Hop Size
-  const ha = Math.round(hs * ratio); // Analysis Hop Size
-  const searchRange = 256; // Dynamic range around target index to search for phase alignment
-
-  // Pre-generate Hanning window to prevent transient pops on edge overlays
   const windowVec = new Float32Array(windowSize);
   for (let i = 0; i < windowSize; i++) {
     windowVec[i] = 0.5 * (1 - Math.cos((2 * Math.PI * i) / (windowSize - 1)));
   }
 
-  // Work variables
-  const candidate = new Float32Array(windowSize);
+  const outputChannels = [];
   const targetTemplate = new Float32Array(searchRange);
 
-  for (let c = 0; c < numChannels; c++) {
-    const inputData = originalBuffer.getChannelData(c);
-    const outputData = stretchedBuffer.getChannelData(c);
-    const scaleBuffer = new Float32Array(outputLen); // Holds normalization coefficients for overlap sum
+  for (let c = 0; c < channels.length; c++) {
+    const inputData = channels[c];
+    const outputData = new Float32Array(outputLen);
+    const scaleBuffer = new Float32Array(outputLen);
 
     let outIdx = 0;
     let inIdx = 0;
 
-    // First frame overlap-add (Bootstrap phase)
     if (outIdx + windowSize <= outputLen && inIdx + windowSize <= inputLen) {
       for (let i = 0; i < windowSize; i++) {
         outputData[outIdx + i] += inputData[inIdx + i] * windowVec[i];
         scaleBuffer[outIdx + i] += windowVec[i];
       }
     }
-
     outIdx += hs;
     inIdx += ha;
 
-    // Main WSOLA overlap loop with cross-correlation phase correlation locks
     while (outIdx + windowSize < outputLen && inIdx + windowSize < inputLen) {
-      // Find the ideal shift 's' in [-searchRange, searchRange] using phase correlation template matching
-      // We correlate the tail of the previous synthesized segment with alternative input frames starting near target.
       const prevSynthOffset = outIdx - hs;
-      
-      // Copy target template (previous synthesis overlapping segments for similarity matching)
       for (let i = 0; i < searchRange; i++) {
         const idx = prevSynthOffset + hs + i;
         targetTemplate[i] = idx < outputLen ? outputData[idx] : 0;
@@ -85,60 +56,107 @@ export function stretchAudioBuffer(
 
       let bestShift = 0;
       let maxCorrelation = -Infinity;
-
-      // Scan search range for highest waveform correlation
       for (let s = -searchRange; s <= searchRange; s++) {
         const candidateStart = inIdx + s;
         if (candidateStart < 0 || candidateStart + windowSize >= inputLen) continue;
-
-        let correlationSum = 0;
-        let candidateEnergy = 0;
-        let templateEnergy = 0;
-
+        let correlationSum = 0, candidateEnergy = 0, templateEnergy = 0;
         for (let i = 0; i < searchRange; i++) {
-          const candVal = inputData[candidateStart + i];
-          const tempVal = targetTemplate[i];
-
-          correlationSum += candVal * tempVal;
-          candidateEnergy += candVal * candVal;
-          templateEnergy += tempVal * tempVal;
+          const cv = inputData[candidateStart + i];
+          const tv = targetTemplate[i];
+          correlationSum += cv * tv;
+          candidateEnergy += cv * cv;
+          templateEnergy += tv * tv;
         }
-
-        // Normalized correlation score calculation
-        const rValue = templateEnergy > 0 && candidateEnergy > 0 
+        const rValue = templateEnergy > 0 && candidateEnergy > 0
           ? correlationSum / Math.sqrt(candidateEnergy * templateEnergy)
           : correlationSum;
-
-        if (rValue > maxCorrelation) {
-          maxCorrelation = rValue;
-          bestShift = s;
-        }
+        if (rValue > maxCorrelation) { maxCorrelation = rValue; bestShift = s; }
       }
 
-      // Extract alignment-locked frame
       const alignedInIdx = inIdx + bestShift;
-
-      // Overlap-add the Hanning windowed aligned frame into output
       for (let i = 0; i < windowSize; i++) {
         if (outIdx + i < outputLen && alignedInIdx + i < inputLen) {
           outputData[outIdx + i] += inputData[alignedInIdx + i] * windowVec[i];
           scaleBuffer[outIdx + i] += windowVec[i];
         }
       }
-
       outIdx += hs;
       inIdx += ha;
     }
 
-    // Post-normalization pass to smooth level variances due to variable hops
     for (let i = 0; i < outputLen; i++) {
-      if (scaleBuffer[i] > 1e-4) {
-        outputData[i] /= scaleBuffer[i];
-      }
+      if (scaleBuffer[i] > 1e-4) outputData[i] /= scaleBuffer[i];
     }
+    outputChannels.push(outputData);
   }
 
-  return stretchedBuffer;
+  // Transfer all output arrays back (zero-copy)
+  self.postMessage({ outputChannels }, outputChannels.map(a => a.buffer));
+};
+`;
+
+let _wsolaWorkerUrl: string | null = null;
+function getWsolaWorkerUrl(): string {
+  if (!_wsolaWorkerUrl) {
+    _wsolaWorkerUrl = URL.createObjectURL(
+      new Blob([wsolaWorkerSource], { type: 'application/javascript' })
+    );
+  }
+  return _wsolaWorkerUrl;
+}
+
+/**
+ * Async WSOLA time-stretch — runs the algorithm in a Web Worker so the main
+ * thread is never blocked.  Previously this ran synchronously and stalled the
+ * UI for hundreds of milliseconds on long clips.
+ *
+ * Ratio > 1.0 speeds up (shorter output), ratio < 1.0 slows down (longer).
+ */
+export async function stretchAudioBuffer(
+  audioContext: AudioContext,
+  originalBuffer: AudioBuffer,
+  ratio: number
+): Promise<AudioBuffer> {
+  if (ratio === 1 || ratio <= 0 || isNaN(ratio)) {
+    return originalBuffer;
+  }
+
+  const numChannels = originalBuffer.numberOfChannels;
+  const sampleRate = originalBuffer.sampleRate;
+  const inputLen = originalBuffer.length;
+  const outputLen = Math.round(inputLen / ratio);
+
+  const windowSize = 2048;
+  const hs = 512;
+  const ha = Math.round(hs * ratio);
+  const searchRange = 256;
+
+  // Copy channel data into plain Float32Arrays for transferable postMessage
+  const channels: Float32Array[] = [];
+  for (let c = 0; c < numChannels; c++) {
+    channels.push(originalBuffer.getChannelData(c).slice());
+  }
+
+  return new Promise((resolve, reject) => {
+    const worker = new Worker(getWsolaWorkerUrl());
+    worker.onmessage = (e) => {
+      worker.terminate();
+      try {
+        const stretchedBuffer = audioContext.createBuffer(numChannels, outputLen, sampleRate);
+        e.data.outputChannels.forEach((ch: Float32Array, i: number) => {
+          stretchedBuffer.getChannelData(i).set(ch);
+        });
+        resolve(stretchedBuffer);
+      } catch (err) {
+        reject(err);
+      }
+    };
+    worker.onerror = (err) => { worker.terminate(); reject(err); };
+    worker.postMessage(
+      { channels, inputLen, outputLen, sampleRate, ratio, windowSize, hs, ha, searchRange },
+      channels.map(c => c.buffer)
+    );
+  });
 }
 
 /**
