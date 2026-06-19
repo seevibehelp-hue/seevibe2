@@ -66,6 +66,7 @@ export function Arrangement() {
   const aiStepMessage = useDawStore(s => s.aiStepMessage);
   const aiStepProgress = useDawStore(s => s.aiStepProgress);
   const aiActivePulseTrackId = useDawStore(s => s.aiActivePulseTrackId);
+  const songStructureSections = useDawStore(s => s.songStructure?.sections || []);
 
   const arrangementRef = useRef<HTMLDivElement>(null);
 
@@ -588,7 +589,44 @@ export function Arrangement() {
             })}
           </div>
         </div>
-        
+
+        {/* ── Section Marker Strip ─────────────────────────────────────── */}
+        {(() => {
+          const sections = songStructureSections;
+          if (!sections.length) return null;
+          const SIGNAL_CHARS: Record<string, string> = {
+            INTRO: '🎬', VERSE: '🎤', PRE_CHORUS: '⚡', CHORUS: '💥',
+            BRIDGE: '🎷', OUTRO: '🎬',
+          };
+          const SEC_COLORS: Record<string, string> = {
+            INTRO: '#6366f1', VERSE: '#8b5cf6', PRE_CHORUS: '#f59e0b',
+            CHORUS: '#ec4899', BRIDGE: '#06b6d4', OUTRO: '#6366f1',
+          };
+          const px16th = gridSize; // pixels per 16th note
+          return (
+            <div className="h-5 sticky top-6 bg-[#0c0c0c] border-b border-[#1e1e1e] z-29 overflow-hidden" style={{ width: widthPx }}>
+              {sections.map((sec: any, i: number) => {
+                const left = sec.startBar * 4 * px16th; // bar → 16ths → px
+                const width = sec.lengthBars * 4 * px16th;
+                const color = SEC_COLORS[sec.type] || '#555';
+                const icon = SIGNAL_CHARS[sec.type] || '🎵';
+                return (
+                  <div
+                    key={sec.id || i}
+                    className="absolute top-0 h-full flex items-center overflow-hidden border-r border-[#0c0c0c] group"
+                    style={{ left, width, backgroundColor: color + '28', borderLeft: `2px solid ${color}` }}
+                    title={`${sec.name || sec.type} — ${sec.lengthBars} bars`}
+                  >
+                    <span className="text-[7px] pl-1 select-none whitespace-nowrap font-bold tracking-wider" style={{ color }}>
+                      {icon} {sec.name || sec.type}
+                    </span>
+                  </div>
+                );
+              })}
+            </div>
+          );
+        })()}
+
         {/* Toolbar floating top-right (sticky) */}
         <div className="sticky top-8 right-4 w-full flex justify-end z-20 pointer-events-none px-4">
             <div className="flex gap-2 pointer-events-auto bg-[#1A1A1A] p-1 rounded-md border border-[#333] opacity-80 hover:opacity-100 transition-opacity items-center">

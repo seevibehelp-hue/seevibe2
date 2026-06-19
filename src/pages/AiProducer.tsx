@@ -1,16 +1,22 @@
 // @ts-nocheck
 import React, { useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { ArrowLeft, Send, Mic, Square, Upload, Sparkles, Play, Pause, Download, Trash2, Wallet, AlertCircle, Music as MusicIcon } from 'lucide-react';
+import {
+  ArrowLeft, Send, Mic, Square, Upload, Sparkles, Play, Pause, Download,
+  Trash2, Wallet, Music as MusicIcon, ChevronDown, ChevronUp, ListMusic,
+  Layers, Zap,
+} from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 import { supabase } from '../integrations/supabase/client';
 import { renderArrangementToWav, SongArrangement } from '../utils/songRenderer';
 import { apiUrl } from '../lib/apiBase';
+import { useDawStore } from '../store/useDawStore';
 
 interface ChatMsg {
   role: 'user' | 'assistant';
   content: string;
   ts: number;
+  arrangement?: SongArrangement; // attach arrangement to assistant messages for structure display
 }
 
 interface SongRow {
@@ -31,11 +37,110 @@ interface SongRow {
 
 const COST_USD = 0.20;
 
+// ─── Section helpers ──────────────────────────────────────────────────────────
+
+const SECTION_ICONS: Record<string, string> = {
+  intro: '🎬', verse: '🎤', verse2: '🎤', prechorus: '⚡', prechorus2: '⚡',
+  chorus: '💥', chorus2: '💥', chorus3: '💥', bridge: '🎷', outro: '🎬',
+};
+const SIGNAL_ICONS: Record<string, string> = {
+  riser: '📈', crash: '💢', fill: '🥁', snare_roll: '🥁',
+  cymbal_swell: '🔔', fx_sweep: '🌊', drop_silence: '🤫', none: '',
+};
+const SECTION_COLORS: Record<string, string> = {
+  intro: '#6366f1', verse: '#8b5cf6', verse2: '#8b5cf6', prechorus: '#f59e0b',
+  prechorus2: '#f59e0b', chorus: '#ec4899', chorus2: '#ec4899', chorus3: '#ec4899',
+  bridge: '#06b6d4', outro: '#6366f1',
+};
+
+function SectionTimeline({ sections, bpm }: { sections: SongArrangement['sections'], bpm: number }) {
+  const secPerBar = (60 / bpm) * 4;
+  const totalBars = sections.reduce((s, x) => s + (x.bars || 0), 0);
+  const totalSec = totalBars * secPerBar;
+
+  return (
+    <div className="mt-2 space-y-1">
+      {/* Bar timeline */}
+      <div className="flex h-5 rounded-md overflow-hidden w-full gap-px">
+        {sections.map((sec, i) => {
+          const pct = ((sec.bars || 0) / totalBars) * 100;
+          const color = SECTION_COLORS[sec.name?.toLowerCase()] || '#555';
+          return (
+            <div
+              key={i}
+              title={`${sec.name} — ${sec.bars} bars`}
+              style={{ width: `${pct}%`, backgroundColor: color, opacity: 0.85 + (sec.energy || 0.6) * 0.15 }}
+              className="flex items-center justify-center text-[7px] font-bold text-white/80 truncate px-0.5 min-w-[4px]"
+            >
+              {pct > 6 ? sec.name?.slice(0, 3).toUpperCase() : ''}
+            </div>
+          );
+        })}
+      </div>
+      {/* Section list */}
+      <div className="grid grid-cols-2 gap-1 mt-1">
+        {sections.map((sec, i) => {
+          const n = sec.name?.toLowerCase() || '';
+          const icon = SECTION_ICONS[n] || '🎵';
+          const signal = sec.signalEvent && sec.signalEvent !== 'none' ? SIGNAL_ICONS[sec.signalEvent] || '' : '';
+          const color = SECTION_COLORS[n] || '#555';
+          return (
+            <div key={i} className="flex items-center gap-1.5 bg-[#0f0f0f] border border-[#1e1e1e] rounded-lg px-2 py-1">
+              <span style={{ color }} className="text-[11px]">{icon}</span>
+              <div className="flex-1 min-w-0">
+                <div className="text-[10px] font-bold text-white/90 capitalize truncate">{sec.name}</div>
+                <div className="text-[8.5px] text-gray-500 font-mono">{sec.bars}b{sec.energy ? ` · E${Math.round((sec.energy || 0) * 100)}` : ''}</div>
+              </div>
+              {signal && <span className="text-[10px] shrink-0" title={sec.signalEvent}>{signal}</span>}
+            </div>
+          );
+        })}
+      </div>
+      <div className="text-[8.5px] text-gray-600 text-right font-mono">{Math.round(totalSec)}s total · {bpm} BPM</div>
+    </div>
+  );
+}
+
+function ArrangementCard({ arr }: { arr: SongArrangement }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <div className="mt-2 bg-[#0c0c0c] border border-[#1e1e1e] rounded-xl p-2.5">
+      <button
+        onClick={() => setOpen(v => !v)}
+        className="w-full flex items-center justify-between text-[10px] text-gray-400 hover:text-white"
+      >
+        <div className="flex items-center gap-1.5">
+          <ListMusic size={11} className="text-fuchsia-400" />
+          <span className="font-mono font-semibold">{arr.sections?.length || 0} sections · {arr.genre}</span>
+          {arr.synthProfile && (
+            <span className="text-[8px] text-cyan-400/70 font-mono hidden sm:block">
+              · {arr.synthProfile.kick} kick · {arr.synthProfile.bass} bass
+            </span>
+          )}
+        </div>
+        {open ? <ChevronUp size={11} /> : <ChevronDown size={11} />}
+      </button>
+      {open && arr.sections?.length > 0 && (
+        <SectionTimeline sections={arr.sections} bpm={arr.bpm} />
+      )}
+      {open && arr.fxNotes && (
+        <p className="mt-2 text-[9px] text-gray-500 font-mono leading-relaxed border-t border-[#1a1a1a] pt-1.5">{arr.fxNotes}</p>
+      )}
+    </div>
+  );
+}
+
+// ─── Main page ────────────────────────────────────────────────────────────────
+
 export function AiProducer() {
   const navigate = useNavigate();
   const { user } = useAuth();
   const [messages, setMessages] = useState<ChatMsg[]>([
-    { role: 'assistant', content: "Hey! I'm your AI producer. Describe the song you want — vibe, genre, mood, tempo, duration. Upload or record vocals if you want me to layer them in. Each generation costs $0.20.", ts: Date.now() },
+    {
+      role: 'assistant',
+      content: "Hey! I'm your AI producer 🎛️\n\nDescribe the song you want — genre, vibe, mood, tempo, duration. I'll produce a full original song with intro, verse, chorus, bridge and outro — section by section, like a pro.\n\nRecord or upload your vocals too and I'll layer them in professionally.",
+      ts: Date.now(),
+    },
   ]);
   const [input, setInput] = useState('');
   const [busy, setBusy] = useState(false);
@@ -52,7 +157,6 @@ export function AiProducer() {
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
 
-  // Load wallet + songs
   const refresh = async () => {
     if (!user) return;
     const [w, s] = await Promise.all([
@@ -64,11 +168,8 @@ export function AiProducer() {
   };
 
   useEffect(() => { refresh(); }, [user]);
-  useEffect(() => {
-    scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight });
-  }, [messages, progress]);
+  useEffect(() => { scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight }); }, [messages, progress]);
 
-  // Vocal recording
   const startRec = async () => {
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
@@ -84,30 +185,22 @@ export function AiProducer() {
       rec.start();
       mediaRecRef.current = rec;
       setIsRecording(true);
-    } catch (e: any) {
-      alert('Mic permission required: ' + e.message);
-    }
+    } catch (e: any) { alert('Mic permission required: ' + e.message); }
   };
-  const stopRec = () => {
-    mediaRecRef.current?.stop();
-    setIsRecording(false);
-  };
+  const stopRec = () => { mediaRecRef.current?.stop(); setIsRecording(false); };
 
   const onPickVocals = (e: React.ChangeEvent<HTMLInputElement>) => {
     const f = e.target.files?.[0];
     if (!f) return;
-    setVocalsBlob(f);
-    setVocalsName(f.name);
+    setVocalsBlob(f); setVocalsName(f.name);
   };
 
-  const uploadToBucket = async (path: string, blob: Blob, contentType: string): Promise<string | null> => {
-    const { error } = await supabase.storage.from('songs').upload(path, blob, { contentType, upsert: true });
+  const uploadToBucket = async (path: string, blob: Blob, ct: string): Promise<string | null> => {
+    const { error } = await supabase.storage.from('songs').upload(path, blob, { contentType: ct, upsert: true });
     if (error) { console.error(error); return null; }
-    const { data } = supabase.storage.from('songs').getPublicUrl(path);
-    return data.publicUrl;
+    return supabase.storage.from('songs').getPublicUrl(path).data.publicUrl;
   };
 
-  // Parse duration from text e.g. "2:30", "3 minutes"
   const parseDuration = (txt: string): number | null => {
     const m = txt.toLowerCase();
     const t = m.match(/(\d{1,2}):(\d{2})/);
@@ -124,7 +217,7 @@ export function AiProducer() {
     const text = input.trim();
     if (!text || busy) return;
     if (balance !== null && balance < COST_USD) {
-      alert(`Insufficient wallet balance. You need $${COST_USD.toFixed(2)}. Top up in Wallet.`);
+      alert(`Insufficient balance. Need $${COST_USD.toFixed(2)}. Top up in Wallet.`);
       return;
     }
 
@@ -134,55 +227,44 @@ export function AiProducer() {
     setProgress({ msg: 'Reserving credits…', pct: 0.02 });
 
     try {
-      // 1) Atomic deduction via RPC (returns insufficient_funds without giving free credit)
+      // 1) Charge wallet
       const { data: chargeRes, error: dErr } = await supabase.rpc('charge_ai_prompt', {
-        p_user_id: user.id,
-        p_provider_id: null,
-        p_prompt: text,
-        p_cost_usd: COST_USD,
+        p_user_id: user.id, p_provider_id: null, p_prompt: text, p_cost_usd: COST_USD,
       });
       if (dErr) throw new Error(dErr.message || 'Wallet charge failed');
       if (chargeRes && (chargeRes as any).success === false) {
-        const reason = (chargeRes as any).reason;
-        if (reason === 'insufficient_funds') {
-          throw new Error(`Insufficient funds — you have ₦${(chargeRes as any).balance_naira?.toLocaleString?.() ?? '0'}, need ₦${(chargeRes as any).required_naira?.toLocaleString?.() ?? '320'}. Top up in Wallet.`);
+        const r = (chargeRes as any);
+        if (r.reason === 'insufficient_funds') {
+          throw new Error(`Insufficient funds — you have ₦${r.balance_naira?.toLocaleString?.() ?? '0'}, need ₦${r.required_naira?.toLocaleString?.() ?? '320'}. Top up in Wallet.`);
         }
-        throw new Error(`Charge failed: ${reason}`);
+        throw new Error(`Charge failed: ${r.reason}`);
       }
-      // Refresh balance from DB after charge
       const { data: w } = await supabase.from('wallets').select('balance_usd').eq('user_id', user.id).maybeSingle();
       if (w) setBalance(Number(w.balance_usd || 0));
 
-
-      // 2) Upload vocals (if any) + analyze structure for vocal-aware AI
+      // 2) Upload + analyze vocals
       let vocalsUrl: string | null = null;
       let vocalAnalysis: any = null;
       if (vocalsBlob) {
         setProgress({ msg: 'Uploading vocals…', pct: 0.05 });
         const ext = vocalsName.split('.').pop() || 'webm';
-        const path = `${user.id}/vocals/${Date.now()}.${ext}`;
-        vocalsUrl = await uploadToBucket(path, vocalsBlob, vocalsBlob.type || 'audio/webm');
-
-        // Analyze vocal: detect BPM-equivalent, silence regions, phrases
+        vocalsUrl = await uploadToBucket(`${user.id}/vocals/${Date.now()}.${ext}`, vocalsBlob, vocalsBlob.type || 'audio/webm');
         try {
           setProgress({ msg: 'Analyzing vocal structure…', pct: 0.1 });
           const arrayBuf = await vocalsBlob.arrayBuffer();
-          const Ctx = (window.AudioContext || (window as any).webkitAudioContext);
+          const Ctx = window.AudioContext || (window as any).webkitAudioContext;
           const ctx = new Ctx();
           const decoded = await ctx.decodeAudioData(arrayBuf.slice(0));
-          const durationSec = decoded.duration;
-          const assumedBpm = 100; // ruler-based default; analyzer is BPM-tolerant
+          const assumedBpm = 100;
           const [{ analyzeAudioPitch }, { VocalAnalyzerProcessor }] = await Promise.all([
-            import('../audio/vocalAnalysis'),
-            import('../audio/vocal-analyzer-processor'),
+            import('../audio/vocalAnalysis'), import('../audio/vocal-analyzer-processor'),
           ]);
           const notes = await analyzeAudioPitch(decoded, assumedBpm, 0.01);
-          const total16ths = (durationSec / 60) * assumedBpm * 4;
+          const total16ths = (decoded.duration / 60) * assumedBpm * 4;
           const phrases = VocalAnalyzerProcessor.detectPhrases(notes, total16ths);
           const structure = VocalAnalyzerProcessor.mapPhrasesToSongStructure(phrases, total16ths);
           vocalAnalysis = {
-            durationSec,
-            assumedBpm,
+            durationSec: decoded.duration, assumedBpm,
             phraseCount: phrases.length,
             phrases: phrases.slice(0, 24).map(p => ({
               startSec: (p.startTime16ths / 4) * (60 / assumedBpm),
@@ -191,42 +273,36 @@ export function AiProducer() {
               pitchVariance: Number(p.pitchVariance.toFixed(2)),
             })),
             sections: structure.sections.map(s => ({
-              type: s.type,
-              name: s.name,
+              type: s.type, name: s.name,
               startSec: (s.startBar * 16 / 4) * (60 / assumedBpm),
               lengthSec: (s.lengthBars * 16 / 4) * (60 / assumedBpm),
             })),
           };
           try { await ctx.close(); } catch {}
-        } catch (analyzeErr) {
-          console.warn("Vocal analysis failed; proceeding without it", analyzeErr);
-        }
+        } catch (err) { console.warn("Vocal analysis failed:", err); }
       }
 
-      // 3) Ask AI for arrangement JSON
+      // 3) Compose via AI
       const requestedDur = parseDuration(text);
       const durationSec = vocalAnalysis?.durationSec
-        ? Math.min(240, Math.max(30, Math.round(vocalAnalysis.durationSec)))
-        : (requestedDur ?? (120 + Math.floor(Math.random() * 60)));
-      setProgress({ msg: 'AI composing…', pct: 0.15 });
+        ? Math.min(240, Math.max(120, Math.round(vocalAnalysis.durationSec)))
+        : (requestedDur ?? (150 + Math.floor(Math.random() * 30)));
+      setProgress({ msg: 'AI composing full song…', pct: 0.15 });
 
-      // Detect user region for culturally-aware genre selection (timezone is more reliable than language)
       let region = 'unknown';
       try {
         const tz = Intl.DateTimeFormat().resolvedOptions().timeZone || '';
-        // Map common timezones to ISO country hints
-        const tzCountry: Record<string,string> = {
+        const tzMap: Record<string,string> = {
           'Africa/Lagos':'NG','Africa/Accra':'GH','Africa/Johannesburg':'ZA','Africa/Nairobi':'KE','Africa/Cairo':'EG',
           'America/New_York':'US','America/Los_Angeles':'US','America/Chicago':'US','America/Sao_Paulo':'BR',
-          'America/Mexico_City':'MX','America/Jamaica':'JM',
-          'Europe/London':'GB','Europe/Paris':'FR','Europe/Berlin':'DE','Europe/Madrid':'ES','Europe/Rome':'IT',
-          'Asia/Tokyo':'JP','Asia/Seoul':'KR','Asia/Kolkata':'IN','Asia/Shanghai':'CN','Asia/Bangkok':'TH',
+          'America/Mexico_City':'MX','America/Jamaica':'JM','Europe/London':'GB','Europe/Paris':'FR',
+          'Europe/Berlin':'DE','Europe/Madrid':'ES','Asia/Tokyo':'JP','Asia/Seoul':'KR',
+          'Asia/Kolkata':'IN','Asia/Shanghai':'CN','Asia/Bangkok':'TH',
         };
-        region = tzCountry[tz] || (navigator.language || '').split('-')[1] || tz || 'unknown';
+        region = tzMap[tz] || (navigator.language || '').split('-')[1] || tz || 'unknown';
       } catch {}
 
-      // Try to extract an explicit genre from the user's text
-      const genreMatch = text.match(/\b(afrobeat[s]?|amapiano|hip[ -]?hop|trap|pop|rnb|r&b|reggae|reggaeton|dancehall|house|techno|edm|jazz|rock|country|gospel|drill|afroswing|kpop|jpop|bollywood|funk|disco|lofi|ambient|classical|blues|salsa|samba)\b/i);
+      const genreMatch = text.match(/\b(afrobeat[s]?|amapiano|hip[ -]?hop|trap|pop|rnb|r&b|reggae|reggaeton|dancehall|house|techno|edm|jazz|rock|country|gospel|drill|afroswing|kpop|jpop|bollywood|funk|disco|lofi|ambient|classical|blues|salsa|samba|gengetone|juju|fuji|highlife)\b/i);
       const requestedGenre = genreMatch ? genreMatch[0] : '';
 
       const { data: { session } } = await supabase.auth.getSession();
@@ -236,15 +312,7 @@ export function AiProducer() {
           'content-type': 'application/json',
           ...(session?.access_token ? { authorization: `Bearer ${session.access_token}` } : {}),
         },
-        body: JSON.stringify({
-          description: text,
-          durationSec,
-          hasVocals: !!vocalsUrl,
-          seed: crypto.randomUUID(),
-          region,
-          requestedGenre,
-          vocalAnalysis,
-        }),
+        body: JSON.stringify({ description: text, durationSec, hasVocals: !!vocalsUrl, seed: crypto.randomUUID(), region, requestedGenre, vocalAnalysis }),
       });
       if (!aiRes.ok) {
         const j = await aiRes.json().catch(() => ({}));
@@ -254,17 +322,16 @@ export function AiProducer() {
       const { arrangement } = await aiRes.json() as { arrangement: SongArrangement };
 
       // 4) Render to WAV
-      setProgress({ msg: 'Rendering audio…', pct: 0.35 });
+      setProgress({ msg: 'Rendering full song…', pct: 0.35 });
       const wavBlob = await renderArrangementToWav(arrangement, vocalsUrl, (msg, pct) => {
-        setProgress({ msg, pct: 0.35 + pct * 0.55 });
+        setProgress({ msg, pct: 0.35 + pct * 0.52 });
       });
 
-      // 5) Upload final audio
+      // 5) Upload
       setProgress({ msg: 'Saving song…', pct: 0.92 });
-      const audioPath = `${user.id}/songs/${Date.now()}.wav`;
-      const audioUrl = await uploadToBucket(audioPath, wavBlob, 'audio/wav');
+      const audioUrl = await uploadToBucket(`${user.id}/songs/${Date.now()}.wav`, wavBlob, 'audio/wav');
 
-      // 6) Save song row
+      // 6) Save DB row
       const { data: songRow, error: sErr } = await supabase.from('songs').insert({
         user_id: user.id,
         title: arrangement.title || 'Untitled',
@@ -281,30 +348,56 @@ export function AiProducer() {
       }).select().single();
       if (sErr) throw new Error(sErr.message);
 
+      const secCount = arrangement.sections?.length || 0;
+      const totalSec = Math.round(arrangement.durationSec);
+      const mins = Math.floor(totalSec / 60);
+      const secs = totalSec % 60;
+      const sectionsLabel = arrangement.sections?.map(s => s.name).join(' → ') || '';
+
+      // Sync section markers to the studio arrangement view
+      if (arrangement.sections?.length) {
+        let barCursor = 0;
+        const TYPE_MAP: Record<string,string> = {
+          intro: 'INTRO', verse: 'VERSE', verse2: 'VERSE', prechorus: 'PRE_CHORUS',
+          prechorus2: 'PRE_CHORUS', chorus: 'CHORUS', chorus2: 'CHORUS', chorus3: 'CHORUS',
+          bridge: 'BRIDGE', outro: 'OUTRO',
+        };
+        const studioSections = arrangement.sections.map((sec, i) => {
+          const type = TYPE_MAP[sec.name?.toLowerCase() || ''] || 'VERSE';
+          const s = {
+            id: `ai_sec_${i}_${Date.now()}`,
+            name: sec.name || type,
+            type,
+            startBar: barCursor,
+            lengthBars: sec.bars || 4,
+            energy: sec.energy,
+            signalEvent: sec.signalEvent,
+          };
+          barCursor += sec.bars || 4;
+          return s;
+        });
+        useDawStore.getState().setSongStructure({ sections: studioSections });
+      }
+
       setMessages(m => [...m, {
         role: 'assistant',
-        content: `🎵 **${arrangement.title}** — ${arrangement.genre}, ${arrangement.bpm} BPM, key ${arrangement.key} ${arrangement.scale}. Duration ${Math.round(arrangement.durationSec)}s${vocalsUrl ? ' (vocals layered)' : ''}. Tap play below to listen.`,
+        content: `🎵 **${arrangement.title}**\n${arrangement.genre} · ${arrangement.bpm} BPM · ${arrangement.key} ${arrangement.scale} · ${mins}:${String(secs).padStart(2,'0')}\n\n${sectionsLabel}`,
         ts: Date.now(),
+        arrangement,
       }]);
-      setVocalsBlob(null);
-      setVocalsName('');
+      setVocalsBlob(null); setVocalsName('');
       await refresh();
     } catch (e: any) {
       console.error(e);
       setMessages(m => [...m, { role: 'assistant', content: `⚠️ ${e.message || 'Something went wrong.'}`, ts: Date.now() }]);
     } finally {
-      setBusy(false);
-      setProgress(null);
+      setBusy(false); setProgress(null);
     }
   };
 
   const handlePlay = (s: SongRow) => {
     if (!s.audio_url) return;
-    if (playingId === s.id) {
-      audioRef.current?.pause();
-      setPlayingId(null);
-      return;
-    }
+    if (playingId === s.id) { audioRef.current?.pause(); setPlayingId(null); return; }
     if (audioRef.current) audioRef.current.pause();
     const a = new Audio(s.audio_url);
     a.onended = () => setPlayingId(null);
@@ -316,15 +409,12 @@ export function AiProducer() {
   const handleDownload = (s: SongRow) => {
     if (!s.audio_url) return;
     const a = document.createElement('a');
-    a.href = s.audio_url;
-    a.download = `${s.title || 'song'}.wav`;
-    a.click();
+    a.href = s.audio_url; a.download = `${s.title || 'song'}.wav`; a.click();
   };
 
   const handleDelete = async (s: SongRow) => {
     if (!confirm(`Delete "${s.title}"?`)) return;
     if (playingId === s.id) { audioRef.current?.pause(); setPlayingId(null); }
-    // best-effort remove storage objects
     if (s.audio_url) {
       const path = s.audio_url.split('/songs/').slice(1).join('/songs/');
       if (path) await supabase.storage.from('songs').remove([path]).catch(() => {});
@@ -341,6 +431,7 @@ export function AiProducer() {
         <div className="flex items-center gap-2">
           <Sparkles size={18} className="text-fuchsia-400" />
           <h1 className="font-bold">AI Producer</h1>
+          <span className="text-[9px] font-mono text-fuchsia-400/60 bg-fuchsia-900/20 px-1.5 py-0.5 rounded-full">Full Songs</span>
         </div>
         <button onClick={() => navigate('/wallet')} className="flex items-center gap-1.5 px-3 py-1.5 bg-[#141414] rounded-full text-xs">
           <Wallet size={12} className="text-emerald-400" />
@@ -352,8 +443,13 @@ export function AiProducer() {
       <div ref={scrollRef} className="flex-1 overflow-y-auto p-4 space-y-3">
         {messages.map((m, i) => (
           <div key={i} className={`flex ${m.role === 'user' ? 'justify-end' : 'justify-start'}`}>
-            <div className={`max-w-[85%] px-3.5 py-2.5 rounded-2xl text-sm whitespace-pre-wrap ${m.role === 'user' ? 'bg-fuchsia-600 text-white' : 'bg-[#161616] text-gray-100 border border-[#222]'}`}>
-              {m.content}
+            <div className={`max-w-[90%] ${m.role === 'user' ? 'bg-fuchsia-600 text-white px-3.5 py-2.5 rounded-2xl' : 'w-full'}`}>
+              <div className={m.role === 'assistant' ? 'bg-[#161616] border border-[#222] rounded-2xl px-3.5 py-2.5 text-sm whitespace-pre-wrap text-gray-100' : 'text-sm'}>
+                {m.content}
+              </div>
+              {m.role === 'assistant' && m.arrangement && (
+                <ArrangementCard arr={m.arrangement} />
+              )}
             </div>
           </div>
         ))}
@@ -361,18 +457,21 @@ export function AiProducer() {
         {progress && (
           <div className="bg-[#0f0f0f] border border-[#222] rounded-xl p-3">
             <div className="flex justify-between text-[11px] text-gray-400 mb-1.5">
-              <span>{progress.msg}</span><span>{Math.round(progress.pct * 100)}%</span>
+              <span className="flex items-center gap-1.5"><Zap size={10} className="text-fuchsia-400" />{progress.msg}</span>
+              <span>{Math.round(progress.pct * 100)}%</span>
             </div>
             <div className="h-1.5 bg-[#1c1c1c] rounded-full overflow-hidden">
-              <div className="h-full bg-gradient-to-r from-fuchsia-500 to-cyan-400 transition-all" style={{ width: `${progress.pct * 100}%` }} />
+              <div className="h-full bg-gradient-to-r from-fuchsia-500 to-cyan-400 transition-all duration-300" style={{ width: `${progress.pct * 100}%` }} />
             </div>
           </div>
         )}
 
-        {/* Songs */}
+        {/* Songs library */}
         {songs.length > 0 && (
           <div className="pt-4 space-y-2">
-            <h2 className="text-[11px] uppercase tracking-wider text-gray-500 font-mono px-1">Your Songs</h2>
+            <h2 className="text-[11px] uppercase tracking-wider text-gray-500 font-mono px-1 flex items-center gap-1.5">
+              <Layers size={10} /> Your Songs
+            </h2>
             {songs.map(s => (
               <div key={s.id} className="bg-[#111] border border-[#1e1e1e] rounded-xl p-3 flex items-center gap-3">
                 <div className="w-11 h-11 rounded-lg bg-gradient-to-br from-fuchsia-600 to-cyan-500 flex items-center justify-center shrink-0">
@@ -381,10 +480,21 @@ export function AiProducer() {
                 <div className="flex-1 min-w-0">
                   <div className="font-semibold text-sm truncate">{s.title}</div>
                   <div className="text-[10px] text-gray-500 truncate">
-                    {s.genre || 'song'} · {s.bpm || '–'} BPM · {s.music_key || '–'} · {s.duration_seconds ? `${Math.round(s.duration_seconds)}s` : ''}
+                    {s.genre || 'song'} · {s.bpm || '–'} BPM · {s.music_key || '–'} · {s.duration_seconds ? `${Math.floor(s.duration_seconds / 60)}:${String(Math.round(s.duration_seconds % 60)).padStart(2,'0')}` : ''}
                   </div>
+                  {/* Mini section bar from saved score_json */}
+                  {s.score_json?.sections?.length > 0 && (
+                    <div className="flex h-1.5 mt-1 rounded-full overflow-hidden gap-px w-full max-w-[160px]">
+                      {s.score_json.sections.map((sec: any, si: number) => {
+                        const total = s.score_json.sections.reduce((a: number, x: any) => a + (x.bars || 0), 0);
+                        const pct = ((sec.bars || 0) / total) * 100;
+                        const color = SECTION_COLORS[sec.name?.toLowerCase()] || '#555';
+                        return <div key={si} style={{ width: `${pct}%`, backgroundColor: color }} className="min-w-[2px]" />;
+                      })}
+                    </div>
+                  )}
                 </div>
-                <button onClick={() => handlePlay(s)} className="w-9 h-9 rounded-full bg-fuchsia-600 hover:bg-fuchsia-500 flex items-center justify-center" disabled={!s.audio_url}>
+                <button onClick={() => handlePlay(s)} className="w-9 h-9 rounded-full bg-fuchsia-600 hover:bg-fuchsia-500 flex items-center justify-center shrink-0" disabled={!s.audio_url}>
                   {playingId === s.id ? <Pause size={14} /> : <Play size={14} className="ml-0.5" />}
                 </button>
                 <button onClick={() => handleDownload(s)} className="w-9 h-9 rounded-full bg-[#1a1a1a] hover:bg-[#222] flex items-center justify-center" disabled={!s.audio_url}>
@@ -399,7 +509,7 @@ export function AiProducer() {
         )}
       </div>
 
-      {/* Composer */}
+      {/* Composer input */}
       <div className="border-t border-[#1a1a1a] p-3 space-y-2">
         {vocalsBlob && (
           <div className="flex items-center gap-2 bg-[#111] border border-[#222] rounded-lg px-3 py-1.5 text-xs">
@@ -411,13 +521,14 @@ export function AiProducer() {
           </div>
         )}
         <div className="flex items-end gap-2">
-          <label className="w-10 h-10 rounded-full bg-[#161616] hover:bg-[#1f1f1f] flex items-center justify-center cursor-pointer shrink-0">
+          <label className="w-10 h-10 rounded-full bg-[#161616] hover:bg-[#1f1f1f] flex items-center justify-center cursor-pointer shrink-0" title="Upload vocals">
             <Upload size={16} />
             <input type="file" accept="audio/*" className="hidden" onChange={onPickVocals} />
           </label>
           <button
             onClick={isRecording ? stopRec : startRec}
             className={`w-10 h-10 rounded-full flex items-center justify-center shrink-0 ${isRecording ? 'bg-red-500 animate-pulse' : 'bg-[#161616] hover:bg-[#1f1f1f]'}`}
+            title="Record vocals"
           >
             {isRecording ? <Square size={14} /> : <Mic size={16} />}
           </button>
@@ -425,7 +536,7 @@ export function AiProducer() {
             value={input}
             onChange={e => setInput(e.target.value)}
             onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSend(); } }}
-            placeholder={busy ? 'Generating…' : 'Describe your song…'}
+            placeholder={busy ? 'Producing your song…' : 'Describe your song — genre, vibe, mood, duration…'}
             rows={1}
             disabled={busy}
             className="flex-1 resize-none bg-[#0f0f0f] border border-[#222] rounded-2xl px-3.5 py-2.5 text-sm placeholder-gray-600 focus:outline-none focus:border-fuchsia-500/50 disabled:opacity-50 max-h-32"
@@ -438,7 +549,9 @@ export function AiProducer() {
             <Send size={16} />
           </button>
         </div>
-        <div className="text-[10px] text-gray-600 text-center font-mono">${COST_USD.toFixed(2)} per generation · 2–3 min original songs</div>
+        <div className="text-[10px] text-gray-600 text-center font-mono">
+          ${COST_USD.toFixed(2)} · full song with intro · verse · chorus · bridge · outro
+        </div>
       </div>
     </div>
   );
