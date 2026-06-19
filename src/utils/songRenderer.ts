@@ -328,6 +328,7 @@ function scheduleSignalEvent(
   if (!type || type === "none") return;
 
   if (type === "crash" || type === "cymbal_swell") {
+    // Inside Tone.Offline the context owns all nodes — no manual dispose needed.
     const crash = new Tone.MetalSynth({
       frequency: type === "cymbal_swell" ? 180 : 220,
       envelope: { attack: type === "cymbal_swell" ? 0.4 : 0.001, decay: 2.5, release: 1.5 },
@@ -335,15 +336,13 @@ function scheduleSignalEvent(
     }).connect(dest);
     crash.volume.value = type === "cymbal_swell" ? -18 : -14;
     crash.triggerAttackRelease("8n", atTime, 0.9);
-    // auto-dispose after use
-    Tone.Transport.schedule(() => { try { crash.dispose(); } catch {} }, atTime + 4);
     return;
   }
 
   if (type === "riser" || type === "fx_sweep") {
     // White noise riser: 2 bars leading up to atTime
     const start = Math.max(0, atTime - secPerBar * 2);
-    const riseDur = atTime - start;
+    const riseDur = Math.max(0.1, atTime - start);
     const noise = new Tone.NoiseSynth({
       noise: { type: "white" },
       envelope: { attack: riseDur * 0.8, decay: 0.0, sustain: 1.0, release: 0.05 },
@@ -356,9 +355,7 @@ function scheduleSignalEvent(
     riserGain.gain.linearRampTo(0.7, riseDur, start);
     riserGain.gain.linearRampTo(0, 0.05, atTime);
     noise.triggerRelease(atTime - 0.05);
-    // Sweep filter up
     riserFilter.frequency.rampTo(8000, riseDur, start);
-    Tone.Transport.schedule(() => { try { noise.dispose(); riserFilter.dispose(); riserGain.dispose(); } catch {} }, atTime + 1);
     return;
   }
 
@@ -369,13 +366,11 @@ function scheduleSignalEvent(
       envelope: { attack: 0.001, decay: 0.12, sustain: 0, release: 0.05 },
     }).connect(dest);
     fillSnare.volume.value = -9;
-    const step = secPerBeat / 4;
-    const fillStart = atTime - secPerBeat;
+    const stepDur = secPerBeat / 4;
+    const fillStart = Math.max(0, atTime - secPerBeat);
     for (let i = 0; i < 4; i++) {
-      const vel = 0.5 + i * 0.12;
-      fillSnare.triggerAttackRelease("32n", fillStart + i * step, Math.min(1, vel));
+      fillSnare.triggerAttackRelease("32n", fillStart + i * stepDur, Math.min(1, 0.5 + i * 0.12));
     }
-    Tone.Transport.schedule(() => { try { fillSnare.dispose(); } catch {} }, atTime + 1);
     return;
   }
 
@@ -386,14 +381,12 @@ function scheduleSignalEvent(
       envelope: { attack: 0.001, decay: 0.09, sustain: 0, release: 0.04 },
     }).connect(dest);
     rollSnare.volume.value = -10;
-    const rollStart = atTime - secPerBar;
+    const rollStart = Math.max(0, atTime - secPerBar);
     const hits = 16;
     for (let i = 0; i < hits; i++) {
       const t = rollStart + (i / hits) * secPerBar;
-      const vel = 0.3 + (i / hits) * 0.65;
-      rollSnare.triggerAttackRelease("32n", t, vel);
+      rollSnare.triggerAttackRelease("32n", t, 0.3 + (i / hits) * 0.65);
     }
-    Tone.Transport.schedule(() => { try { rollSnare.dispose(); } catch {} }, atTime + 1);
     return;
   }
 

@@ -604,7 +604,7 @@ export function Arrangement() {
           };
           const px16th = gridSize; // pixels per 16th note
           return (
-            <div className="h-5 sticky top-6 bg-[#0c0c0c] border-b border-[#1e1e1e] z-29 overflow-hidden" style={{ width: widthPx }}>
+            <div className="h-5 sticky top-6 bg-[#0c0c0c] border-b border-[#1e1e1e] z-[29] overflow-hidden" style={{ width: widthPx }}>
               {sections.map((sec: any, i: number) => {
                 const left = sec.startBar * 4 * px16th; // bar → 16ths → px
                 const width = sec.lengthBars * 4 * px16th;
@@ -628,7 +628,7 @@ export function Arrangement() {
         })()}
 
         {/* Toolbar floating top-right (sticky) */}
-        <div className="sticky top-8 right-4 w-full flex justify-end z-20 pointer-events-none px-4">
+        <div className="sticky top-11 right-4 w-full flex justify-end z-20 pointer-events-none px-4">
             <div className="flex gap-2 pointer-events-auto bg-[#1A1A1A] p-1 rounded-md border border-[#333] opacity-80 hover:opacity-100 transition-opacity items-center">
                <div className="flex items-center gap-1 px-1 border-r border-[#333] pr-2">
                  <button onClick={() => setZoom(Math.max(0.25, zoom - 0.25))} className="text-[10px] font-bold text-gray-400 hover:text-white w-5 h-5 rounded hover:bg-[#333]" title="Zoom out">−</button>
@@ -674,8 +674,8 @@ export function Arrangement() {
         </div>
 
          {isAiProducing && (
-          <div className="absolute inset-x-0 top-6 bottom-0 bg-black/10 z-30 pointer-events-auto cursor-not-allowed select-none border border-[#00FF9C]/10 rounded" title="Timeline locked while AI is producing">
-            <div className="sticky left-6 top-8 bg-zinc-950/90 border border-[#00FF9C]/20 px-4 py-2 rounded shadow-lg shadow-black/80 flex items-center gap-2 max-w-max">
+          <div className="absolute inset-x-0 top-11 bottom-0 bg-black/10 z-30 pointer-events-auto cursor-not-allowed select-none border border-[#00FF9C]/10 rounded" title="Timeline locked while AI is producing">
+            <div className="sticky left-6 top-11 bg-zinc-950/90 border border-[#00FF9C]/20 px-4 py-2 rounded shadow-lg shadow-black/80 flex items-center gap-2 max-w-max">
                <span className="w-2.5 h-2.5 rounded-full bg-[#00FF9C] animate-pulse shrink-0" />
                <span className="text-[10px] text-zinc-300 uppercase font-mono font-extrabold tracking-wider select-none">🔒 Manual Timeline Locked during AI building</span>
             </div>
@@ -684,7 +684,7 @@ export function Arrangement() {
 
         {/* Background Grid Lines */}
         <div 
-          className="absolute top-6 bottom-0 pointer-events-none" 
+          className="absolute top-11 bottom-0 pointer-events-none" 
           style={{ 
             width: widthPx,
             backgroundImage: 'linear-gradient(to right, #1A1A1A 1px, transparent 1px), linear-gradient(to right, #2A2A2A 1px, transparent 1px)',
