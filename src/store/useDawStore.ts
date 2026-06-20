@@ -858,7 +858,7 @@ export const useDawStore = create<DawState>()(
     backgroundDaemonGranted: state.backgroundDaemonGranted,
     shellBindingGranted: state.shellBindingGranted,
   })
-})),
+}),
     {
       // persist middleware: saves the DAW state to localStorage so tracks,
       // clips (minus stale blob: URLs), BPM, and settings survive a reload.
