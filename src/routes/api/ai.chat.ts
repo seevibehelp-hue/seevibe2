@@ -1,6 +1,6 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { generateObject, generateText, tool, jsonSchema } from "ai";
-import { createLovableAiGatewayProvider } from "@/lib/ai-gateway.server";
+import { resolveModel, type ProviderRequest } from "@/lib/ai-gateway.server";
 import { requireAuth, sanitizeUserText } from "@/lib/api-auth.server";
 
 const HARDCODED_SYSTEM_GUARDRAIL = `You are the See Vibe AI Super Producer assistant.
@@ -42,23 +42,17 @@ export const Route = createFileRoute("/api/ai/chat")({
           if (auth instanceof Response) return auth;
 
           const body = (await request.json()) as {
-            messages?: any[];
-            systemInstruction?: string;
-            functionDeclarations?: any[];
-            config?: { responseSchema?: any };
-          };
-          const key = process.env.LOVABLE_API_KEY;
-          if (!key) {
-            return new Response(
-              JSON.stringify({ error: "LOVABLE_API_KEY is not configured" }),
-              { status: 500, headers: { "content-type": "application/json" } },
-            );
-          }
+                        messages?: any[];
+                        systemInstruction?: string;
+                        functionDeclarations?: any[];
+                        config?: { responseSchema?: any };
+                        provider?: ProviderRequest;
+                      };
 
-          const gateway = createLovableAiGatewayProvider(key);
-          const model = gateway("google/gemini-2.5-flash");
+                      const { model: resolvedModel, provider: resolvedProvider } = await resolveModel(body.provider);
+                      const model = resolvedModel;
 
-          // Convert Gemini-style function declarations into AI SDK tools.
+                      // Convert Gemini-style function declarations into AI SDK tools.
           // Only allow a sane number with valid string names.
           const tools: Record<string, any> = {};
           for (const fn of (body.functionDeclarations ?? []).slice(0, 32)) {

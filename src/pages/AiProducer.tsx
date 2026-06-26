@@ -227,10 +227,28 @@ export function AiProducer() {
     setProgress({ msg: 'Reserving credits…', pct: 0.02 });
 
     try {
-      // 1) Charge wallet
-      const { data: chargeRes, error: dErr } = await supabase.rpc('charge_ai_prompt', {
-        p_user_id: user.id, p_provider_id: null, p_prompt: text, p_cost_usd: COST_USD,
-      });
+            // 1) Look up active AI provider (admin-configured) so we charge via
+            // the right provider's per-prompt cost AND pass the provider config
+            // to the server-side universal AI provider dispatcher.
+            let activeProvider: any = null;
+            try {
+              const { data: activeProviders } = await supabase
+                .from('ai_providers')
+                .select('*')
+                .eq('is_active', true)
+                .order('is_default', { ascending: false })
+                .limit(1);
+              if (activeProviders && activeProviders.length > 0) {
+                activeProvider = activeProviders[0];
+              }
+            } catch (lookupErr) {
+              console.warn('Provider lookup failed, falling back to null provider:', lookupErr);
+            }
+
+            // 1) Charge wallet
+            const { data: chargeRes, error: dErr } = await supabase.rpc('charge_ai_prompt', {
+              p_user_id: user.id, p_provider_id: activeProvider?.id ?? null, p_prompt: text, p_cost_usd: COST_USD,
+            });
       if (dErr) throw new Error(dErr.message || 'Wallet charge failed');
       if (chargeRes && (chargeRes as any).success === false) {
         const r = (chargeRes as any);
@@ -312,7 +330,26 @@ export function AiProducer() {
           'content-type': 'application/json',
           ...(session?.access_token ? { authorization: `Bearer ${session.access_token}` } : {}),
         },
-        body: JSON.stringify({ description: text, durationSec, hasVocals: !!vocalsUrl, seed: crypto.randomUUID(), region, requestedGenre, vocalAnalysis }),
+        body: JSON.stringify({
+            description: text,
+            durationSec,
+            hasVocals: !!vocalsUrl,
+            seed: crypto.randomUUID(),
+            region,
+            requestedGenre,
+            vocalAnalysis,
+            // Pass the admin-configured provider config so the server-side
+            // universal AI provider dispatcher routes to the right model.
+            // If no active provider is configured, the server falls back to
+            // the Lovable AI Gateway.
+            provider: activeProvider ? {
+              id: activeProvider.id,
+              provider_type: activeProvider.provider_type,
+              endpoint: activeProvider.endpoint,
+              model: activeProvider.model,
+              api_key: activeProvider.api_key,
+            } : null,
+          }),
       });
       if (!aiRes.ok) {
         const j = await aiRes.json().catch(() => ({}));

@@ -29,13 +29,16 @@ export function Admin() {
 
 
   // Form
-  const [pPreset, setPPreset] = useState('OpenAI');
-  const [pName, setPName] = useState('OpenAI GPT-4o-mini');
-  const [pEndpoint, setPEndpoint] = useState('https://api.openai.com/v1/chat/completions');
-  const [pModel, setPModel] = useState('gpt-4o-mini');
-  const [pKey, setPKey] = useState('');
-  const [pCost, setPCost] = useState('0.2');
-  const [pDefault, setPDefault] = useState(false);
+      const [pPreset, setPPreset] = useState('OpenAI');
+      const [pName, setPName] = useState('OpenAI GPT-4o-mini');
+      const [pEndpoint, setPEndpoint] = useState('https://api.openai.com/v1/chat/completions');
+      const [pModel, setPModel] = useState('gpt-4o-mini');
+      const [pKey, setPKey] = useState('');
+      const [pCost, setPCost] = useState('0.2');
+      const [pDefault, setPDefault] = useState(false);
+      // Edit-in-place: when set, the form populates from the matching provider
+      // and addProvider() routes to .update() instead of .insert().
+      const [editingProviderId, setEditingProviderId] = useState<string | null>(null);
 
   useEffect(() => {
     if (!user) return;
@@ -76,7 +79,62 @@ export function Admin() {
       setPName('Lovable AI (Gemini Flash)');
       setPEndpoint('https://ai.gateway.lovable.dev/v1/chat/completions');
       setPModel('google/gemini-3-flash-preview');
+    } else if (preset === 'Gemini') {
+      setPName('Google Gemini (Direct)');
+      setPEndpoint('https://generativelanguage.googleapis.com/v1beta/openai');
+      setPModel('gemini-2.5-flash');
+    } else if (preset === 'Groq') {
+      setPName('Groq (fast inference)');
+      setPEndpoint('https://api.groq.com/openai/v1');
+      setPModel('llama-3.3-70b-versatile');
+    } else if (preset === 'Mistral') {
+      setPName('Mistral AI');
+      setPEndpoint('https://api.mistral.ai/v1');
+      setPModel('mistral-large-latest');
     }
+    // 'Custom' leaves the form values as-is.
+  };
+
+  const startEditProvider = (p: any) => {
+    setEditingProviderId(p.id);
+    // Pick the closest matching preset so the dropdown reflects the type.
+    if (p.provider_type === 'lovable') setPPreset('Lovable');
+    else if (p.provider_type === 'gemini_direct') setPPreset('Gemini');
+    else if (p.endpoint?.includes('groq.com')) setPPreset('Groq');
+    else if (p.endpoint?.includes('mistral')) setPPreset('Mistral');
+    else if (p.endpoint?.includes('api.openai.com')) setPPreset('OpenAI');
+    else setPPreset('Custom');
+    setPName(p.name || '');
+    setPEndpoint(p.endpoint || '');
+    setPModel(p.model || '');
+    setPKey(''); // never echo the api_key back into the form
+    setPCost(String(p.cost_per_prompt_usd ?? '0.20'));
+    setPDefault(!!p.is_default);
+    // Scroll the form into view so admin sees they're editing.
+    setTimeout(() => {
+      const form = document.getElementById('add-provider-form');
+      form?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }, 50);
+  };
+
+  const cancelEditProvider = () => {
+    setEditingProviderId(null);
+    // Reset form back to OpenAI defaults so admin doesn't accidentally save
+    // the previous edit's values into a fresh insert.
+    setPPreset('OpenAI');
+    setPName('OpenAI GPT-4o-mini');
+    setPEndpoint('https://api.openai.com/v1/chat/completions');
+    setPModel('gpt-4o-mini');
+    setPKey('');
+    setPCost('0.2');
+    setPDefault(false);
+  };
+
+  const presetToProviderType = (preset: string): string => {
+    if (preset === 'Lovable') return 'lovable';
+    if (preset === 'Gemini') return 'gemini_direct';
+    // OpenAI / Groq / Mistral / Custom are all OpenAI-compatible.
+    return 'openai_compatible';
   };
 
   const toggleDefault = async (providerId: string, currentVal: boolean) => {
@@ -95,25 +153,77 @@ export function Admin() {
 
   const addProvider = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (pDefault) {
-      await supabase.from('ai_providers').update({ is_default: false }).neq('id', 'placeholderId');
+
+    // Basic validation.
+    const costNum = parseFloat(pCost);
+    if (!pName.trim() || !pEndpoint.trim() || !pModel.trim()) {
+      alert('Name, endpoint, and model are required.');
+      return;
     }
-    const { error } = await supabase.from('ai_providers').insert({
-      name: pName,
-      endpoint: pEndpoint,
-      model: pModel,
-      api_key: pKey || null,
-      cost_per_prompt_usd: parseFloat(pCost),
+    if (!Number.isFinite(costNum) || costNum < 0) {
+      alert('Cost must be a non-negative number.');
+      return;
+    }
+    try {
+      // Validate endpoint is a URL.
+      // eslint-disable-next-line no-new
+      new URL(pEndpoint);
+    } catch {
+      alert('Endpoint must be a valid URL (e.g. https://api.openai.com/v1).');
+      return;
+    }
+    // Non-Lovable providers require an API key.
+    if (pPreset !== 'Lovable' && !pKey.trim() && !editingProviderId) {
+      alert('API key is required for this provider type.');
+      return;
+    }
+
+    const payload = {
+      name: pName.trim(),
+      endpoint: pEndpoint.trim(),
+      model: pModel.trim(),
+      cost_per_prompt_usd: costNum,
       is_default: pDefault,
-      provider_type: pPreset === 'Lovable' ? 'lovable' : 'openai_compatible',
+      provider_type: presetToProviderType(pPreset),
       is_active: true,
-      created_by: user?.id
-    });
-    if (!error) {
-      alert("Added provider successfully");
-      const { data } = await supabase.from('ai_providers').select('*').order('created_at', { ascending: false });
-      setProviders(data || []);
-    } else alert(error.message);
+    };
+    // Only update api_key if admin typed a new one — leaving the field blank
+    // on edit preserves the existing stored key.
+    if (pKey.trim()) (payload as any).api_key = pKey.trim();
+
+    if (editingProviderId) {
+      // EDIT MODE: update in place
+      if (pDefault) {
+        await supabase.from('ai_providers').update({ is_default: false }).neq('id', editingProviderId);
+      }
+      const { error } = await supabase.from('ai_providers')
+        .update(payload)
+        .eq('id', editingProviderId);
+      if (error) {
+        alert(error.message);
+        return;
+      }
+      alert(`Provider "${pName.trim()}" updated.`);
+      cancelEditProvider();
+    } else {
+      // ADD MODE: insert new
+      if (pDefault) {
+        await supabase.from('ai_providers').update({ is_default: false }).neq('id', 'placeholderId');
+      }
+      const { error } = await supabase.from('ai_providers').insert({
+        ...payload,
+        api_key: (payload as any).api_key ?? null,
+        created_by: user?.id,
+      });
+      if (error) {
+        alert(error.message);
+        return;
+      }
+      alert(`Provider "${pName.trim()}" added.`);
+    }
+
+    const { data } = await supabase.from('ai_providers').select('*').order('created_at', { ascending: false });
+    setProviders(data || []);
   };
 
   const uploadSample = async (e: React.FormEvent) => {
@@ -267,16 +377,21 @@ export function Admin() {
         </div>
       ) : tab === 'ai' ? (
         <div className="space-y-6">
-          <form onSubmit={addProvider} className="bg-[#141414] p-4 rounded-xl border border-[#222] space-y-4">
-            <h2 className="font-bold text-sm flex items-center mb-2"><Plus size={16} className="mr-2"/> Add AI provider</h2>
+          <form id="add-provider-form" onSubmit={addProvider} className="bg-[#141414] p-4 rounded-xl border border-[#222] space-y-4">
+                        <h2 className="font-bold text-sm flex items-center mb-2">
+                          {editingProviderId ? <><span className="text-amber-400">Edit provider</span><span className="ml-auto text-[10px] text-gray-500 font-mono">id: {editingProviderId.slice(0, 8)}…</span></> : <><Plus size={16} className="mr-2"/> Add AI provider</>}
+                        </h2>
             
             <div>
               <label className="text-[10px] text-gray-400 font-semibold uppercase mb-1 block">Quick preset</label>
               <select value={pPreset} onChange={e => handlePresetChange(e.target.value)} className="w-full bg-[#1A1A1A] border border-[#2A2A2A] rounded-lg px-3 py-2 text-sm focus:border-fuchsia-500 focus:outline-none appearance-none">
-                <option>OpenAI</option>
-                <option>Lovable</option>
-                <option>Custom</option>
-              </select>
+                                <option>OpenAI</option>
+                                <option>Lovable</option>
+                                <option>Gemini</option>
+                                <option>Groq</option>
+                                <option>Mistral</option>
+                                <option>Custom</option>
+                              </select>
             </div>
             
             <div>
@@ -310,9 +425,20 @@ export function Admin() {
               </div>
             </div>
 
-            <button type="submit" className="w-full bg-gradient-to-r from-fuchsia-500 to-pink-500 text-white font-semibold rounded-lg py-3 mt-2">
-              Add provider
-            </button>
+            <div className="flex gap-2 mt-2">
+                            {editingProviderId && (
+                              <button
+                                type="button"
+                                onClick={cancelEditProvider}
+                                className="flex-1 bg-[#2A2A2A] text-gray-300 font-semibold rounded-lg py-3 hover:bg-[#333] transition-colors"
+                              >
+                                Cancel
+                              </button>
+                            )}
+                            <button type="submit" className={`flex-1 ${editingProviderId ? 'bg-gradient-to-r from-amber-500 to-orange-500' : 'bg-gradient-to-r from-fuchsia-500 to-pink-500'} text-white font-semibold rounded-lg py-3`}>
+                              {editingProviderId ? 'Save changes' : 'Add provider'}
+                            </button>
+                          </div>
           </form>
 
           <div className="space-y-3">
@@ -327,29 +453,40 @@ export function Admin() {
                   <div className="text-[10px] text-gray-500 truncate max-w-[250px]">{p.endpoint}</div>
                 </div>
                 <div className="flex items-center gap-2 shrink-0">
-                  <button 
-                    onClick={() => toggleActive(p.id, !!p.is_active)}
-                    className={`text-[10px] px-2 py-1 rounded font-semibold transition-colors ${p.is_active ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20' : 'bg-zinc-800 text-zinc-500 border border-transparent'}`}
-                  >
-                    {p.is_active ? 'Active' : 'Inactive'}
-                  </button>
-                  {!p.is_default && (
-                    <button 
-                      onClick={() => toggleDefault(p.id, !!p.is_default)}
-                      className="text-[10px] px-2 py-1 rounded font-semibold bg-fuchsia-500/10 text-fuchsia-400 border border-fuchsia-500/20 hover:bg-fuchsia-500 hover:text-white transition-colors"
-                    >
-                      Make Default
-                    </button>
-                  )}
-                  <button onClick={async () => {
-                    if (confirm("Delete this provider?")) {
-                      await supabase.from('ai_providers').delete().eq('id', p.id);
-                      setProviders(providers.filter(x => x.id !== p.id));
-                    }
-                  }} className="p-2 hover:bg-[#2A2A2A] rounded-lg text-gray-400 hover:text-red-400 transition-colors">
-                    <Trash2 size={16} />
-                  </button>
-                </div>
+                                    <button
+                                      onClick={() => toggleActive(p.id, !!p.is_active)}
+                                      className={`text-[10px] px-2 py-1 rounded font-semibold transition-colors ${p.is_active ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20' : 'bg-zinc-800 text-zinc-500 border border-transparent'}`}
+                                    >
+                                      {p.is_active ? 'Active' : 'Inactive'}
+                                    </button>
+                                    {!p.is_default && (
+                                      <button
+                                        onClick={() => toggleDefault(p.id, !!p.is_default)}
+                                        className="text-[10px] px-2 py-1 rounded font-semibold bg-fuchsia-500/10 text-fuchsia-400 border border-fuchsia-500/20 hover:bg-fuchsia-500 hover:text-white transition-colors"
+                                      >
+                                        Make Default
+                                      </button>
+                                    )}
+                                    <button
+                                      onClick={() => startEditProvider(p)}
+                                      className="p-2 hover:bg-[#2A2A2A] rounded-lg text-gray-400 hover:text-amber-400 transition-colors"
+                                      title="Edit provider (model, endpoint, API key)"
+                                    >
+                                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                                        <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/>
+                                        <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/>
+                                      </svg>
+                                    </button>
+                                    <button onClick={async () => {
+                                      if (confirm("Delete this provider?")) {
+                                        await supabase.from('ai_providers').delete().eq('id', p.id);
+                                        setProviders(providers.filter(x => x.id !== p.id));
+                                        if (editingProviderId === p.id) cancelEditProvider();
+                                      }
+                                    }} className="p-2 hover:bg-[#2A2A2A] rounded-lg text-gray-400 hover:text-red-400 transition-colors">
+                                      <Trash2 size={16} />
+                                    </button>
+                                  </div>
               </div>
             ))}
           </div>

@@ -1,6 +1,6 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { generateText } from "ai";
-import { createLovableAiGatewayProvider } from "@/lib/ai-gateway.server";
+import { resolveModel, type ProviderRequest } from "@/lib/ai-gateway.server";
 import { requireAuth, sanitizeUserText } from "@/lib/api-auth.server";
 
 /**
@@ -23,33 +23,29 @@ export const Route = createFileRoute("/api/ai/produce-song")({
           if (auth instanceof Response) return auth;
 
           const body = (await request.json()) as {
-            description?: string;
-            durationSec?: number;
-            hasVocals?: boolean;
-            seed?: string;
-            region?: string;
-            requestedGenre?: string;
-            vocalAnalysis?: any;
-          };
+                        description: string;
+                        durationSec?: number;
+                        hasVocals?: boolean;
+                        seed?: string;
+                        region?: string;
+                        requestedGenre?: string;
+                        vocalAnalysis?: any;
+                        provider?: ProviderRequest;
+                      };
 
-          const description = sanitizeUserText(body.description, 500);
-          if (!description) {
-            return Response.json({ error: "description is required" }, { status: 400 });
-          }
+                      const description = sanitizeUserText(body.description, 500);
+                      if (!description) {
+                        return Response.json({ error: "description is required" }, { status: 400 });
+                      }
 
-          const durationSec = Math.min(Math.max(Number(body.durationSec) || 150, 120), 240);
-          const hasVocals = Boolean(body.hasVocals);
-          const seed = body.seed || Math.random().toString(36).slice(2);
-          const region = sanitizeUserText(body.region, 60) || "unknown";
-          const requestedGenre = sanitizeUserText(body.requestedGenre, 60);
+                      const durationSec = Math.min(Math.max(Number(body.durationSec) || 150, 120), 240);
+                      const hasVocals = Boolean(body.hasVocals);
+                      const seed = body.seed || Math.random().toString(36).slice(2);
+                      const region = sanitizeUserText(body.region, 60) || "unknown";
+                      const requestedGenre = sanitizeUserText(body.requestedGenre, 60);
 
-          const key = process.env.LOVABLE_API_KEY;
-          if (!key) {
-            return Response.json({ error: "LOVABLE_API_KEY not configured" }, { status: 500 });
-          }
-
-          const gateway = createLovableAiGatewayProvider(key);
-          const model = gateway("google/gemini-2.5-flash");
+                      const { model: resolvedModel } = await resolveModel(body.provider);
+                      const model = resolvedModel;
 
           // ─── Genre selection ────────────────────────────────────────────────
           const genreInstruction = requestedGenre

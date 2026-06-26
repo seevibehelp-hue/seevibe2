@@ -2514,45 +2514,49 @@ export function ChatView() {
 
       // Call our server or Supabase Edge endpoint depending on Admin configurations
       let response;
-      let usedSupabaseEdge = false;
-      let feeCharged = "$0.20 / ₦320";
+              let usedSupabaseEdge = false;
+              let feeCharged = "$0.20 / ₦320";
+              // Lift provider to outer scope so the fetch call below can pass its
+              // config (endpoint / model / api_key / provider_type) to the server-side
+              // universal AI provider dispatcher.
+              let activeProvider: any = null;
 
-      try {
-        const { data: { session } } = await supabase.auth.getSession();
-        const user = session?.user;
+              try {
+                const { data: { session } } = await supabase.auth.getSession();
+                const user = session?.user;
 
-        if (user) {
-          const { data: activeProviders, error: reqErr } = await supabase
-            .from('ai_providers')
-            .select('*')
-            .eq('is_active', true);
-          
-          if (!reqErr && activeProviders && activeProviders.length > 0) {
-            const provider = activeProviders.find(p => p.is_default) || activeProviders[0];
-            const providerId = provider.id;
-            const providerCost = provider.cost_per_prompt_usd || 0.20;
-            feeCharged = `$${providerCost.toFixed(2)} / ₦${Math.round(providerCost * 1600)}`;
+                if (user) {
+                  const { data: activeProviders, error: reqErr } = await supabase
+                    .from('ai_providers')
+                    .select('*')
+                    .eq('is_active', true);
 
-            console.log(`[Supabase AI Provider] Using configured provider: ${provider.name} (${providerId})`);
+                  if (!reqErr && activeProviders && activeProviders.length > 0) {
+                    activeProvider = activeProviders.find(p => p.is_default) || activeProviders[0];
+                    const providerId = activeProvider.id;
+                    const providerCost = activeProvider.cost_per_prompt_usd || 0.20;
+                    feeCharged = `$${providerCost.toFixed(2)} / ₦${Math.round(providerCost * 1600)}`;
 
-            // Charge prompt in database securely via RPC first
-            const { data: chargeSuccess, error: chargeError } = await supabase.rpc('charge_ai_prompt', {
-              p_user_id: user.id,
-              p_provider_id: providerId,
-              p_prompt: userMessage,
-              p_cost_usd: providerCost
-            });
+                    console.log(`[Supabase AI Provider] Using configured provider: ${activeProvider.name} (${providerId})`);
 
-            if (chargeError || !chargeSuccess) {
-              throw new Error(chargeError?.message || "Insufficient balance or transaction failed in wallet database.");
-            }
+                    // Charge prompt in database securely via RPC first
+                    const { data: chargeSuccess, error: chargeError } = await supabase.rpc('charge_ai_prompt', {
+                      p_user_id: user.id,
+                      p_provider_id: providerId,
+                      p_prompt: userMessage,
+                      p_cost_usd: providerCost
+                    });
 
-            // NOTE: The legacy `ai-assistant` Supabase Edge Function is not deployed in this
-            // project — this stack uses the TanStack server route `/api/ai/chat` instead.
-            // Wallet has already been charged above; fall through to the local API below.
-          }
-        }
-      } catch (edgeErr: any) {
+                    if (chargeError || !chargeSuccess) {
+                      throw new Error(chargeError?.message || "Insufficient balance or transaction failed in wallet database.");
+                    }
+
+                    // NOTE: The legacy `ai-assistant` Supabase Edge Function is not deployed in this
+                    // project — this stack uses the TanStack server route `/api/ai/chat` instead.
+                    // Wallet has already been charged above; fall through to the local API below.
+                  }
+                }
+              } catch (edgeErr: any) {
         console.warn("[Edge Function Error Fallback] Error playing through Supabase Edge function, invoking local fallback api:", edgeErr);
         if (edgeErr.message?.includes("Insufficient balance") || edgeErr.message?.includes("wallet")) {
           alert(`AI Prompt Blocked: ${edgeErr.message}`);
@@ -2581,7 +2585,18 @@ export function ChatView() {
                 parts: [{ text: m.content }]
               })).concat([{ role: 'user', parts: [{ text: userMessage }] }]),
             systemInstruction,
-            config
+            config,
+            // Send the admin-configured provider config to the server-side
+            // dispatcher so the AI call routes to the right model. If no
+            // active provider is configured, the server falls back to the
+            // Lovable AI Gateway (preserves existing behavior).
+            provider: activeProvider ? {
+              id: activeProvider.id,
+              provider_type: activeProvider.provider_type,
+              endpoint: activeProvider.endpoint,
+              model: activeProvider.model,
+              api_key: activeProvider.api_key,
+            } : null,
           })
         });
 
