@@ -2,6 +2,107 @@
 import { createClient } from '@supabase/supabase-js';
 import type { Database } from './types';
 
+// In-memory stub that returns empty results so the app can render even when
+// Supabase env vars are missing on the deployment host (e.g. fresh Vercel
+// project without dashboard env vars configured). Every method resolves with
+// a benign empty shape — UI components render, no SSR crash.
+function createStubClient(): any {
+  const warn = () => {
+    if (typeof console !== "undefined") {
+      console.warn(
+        "[Supabase] stub client in use — Supabase env vars not configured. " +
+          "Add VITE_SUPABASE_URL + VITE_SUPABASE_PUBLISHABLE_KEY to your " +
+          "deployment environment to enable auth/projects/storage.",
+      );
+    }
+  };
+  const chain: any = new Proxy(
+    {},
+    {
+      get(_t, prop) {
+        if (prop === "then") return undefined; // never awaitable as a thenable
+        if (prop === "single" || prop === "maybeSingle") {
+          return async () => {
+            warn();
+            return { data: null, error: { message: "Supabase not configured" } };
+          };
+        }
+        if (prop === "order" || prop === "eq" || prop === "select" || prop === "insert" || prop === "update" || prop === "upsert" || prop === "delete" || prop === "in" || prop === "limit" || prop === "range" || prop === "match" || prop === "or" || prop === "filter" || prop === "not" || prop === "gte" || prop === "lte" || prop === "gt" || prop === "lt" || prop === "like" || prop === "ilike" || prop === "is" || prop === "neq") {
+          return () => chain;
+        }
+        return async () => {
+          warn();
+          return { data: [], count: 0, error: null };
+        };
+      },
+    },
+  );
+  const auth: any = {
+    getSession: async () => {
+      warn();
+      return { data: { session: null }, error: null };
+    },
+    getUser: async () => {
+      warn();
+      return { data: { user: null }, error: null };
+    },
+    onAuthStateChange: (_event: any, _cb: any) => {
+      warn();
+      return { data: { subscription: { unsubscribe: () => {} } } };
+    },
+    signInWithPassword: async () => {
+      warn();
+      return { data: { user: null, session: null }, error: { message: "Supabase not configured" } };
+    },
+    signInWithOAuth: async () => {
+      warn();
+      return { data: { provider: null, url: null }, error: { message: "Supabase not configured" } };
+    },
+    signUp: async () => {
+      warn();
+      return { data: { user: null, session: null }, error: { message: "Supabase not configured" } };
+    },
+    signOut: async () => {
+      warn();
+      return { error: null };
+    },
+  };
+  const storage: any = {
+    from: () => ({
+      upload: async () => ({ data: null, error: { message: "Supabase not configured" } }),
+      download: async () => ({ data: null, error: { message: "Supabase not configured" } }),
+      getPublicUrl: () => ({ data: { publicUrl: "" } }),
+      remove: async () => ({ data: null, error: { message: "Supabase not configured" } }),
+    }),
+  };
+  const functions: any = {
+    invoke: async () => ({ data: null, error: { message: "Supabase not configured" } }),
+  };
+  const realtime: any = {
+    channel: () => ({
+      on: function () { return this; },
+      subscribe: () => realtime.channel(),
+      unsubscribe: async () => {},
+    }),
+    removeChannel: async () => {},
+  };
+  return new Proxy(
+    {},
+    {
+      get(_t, prop) {
+        if (prop === "auth") return auth;
+        if (prop === "storage") return storage;
+        if (prop === "functions") return functions;
+        if (prop === "from") return () => chain;
+        if (prop === "rpc") return async () => ({ data: null, error: { message: "Supabase not configured" } });
+        if (prop === "channel") return realtime.channel;
+        if (prop === "removeChannel") return realtime.removeChannel;
+        return undefined;
+      },
+    },
+  );
+}
+
 function createSupabaseClient() {
   // Use import.meta.env for client-side (Vite build-time replacement)
   // Fall back to process.env for SSR (server-side rendering)
@@ -10,20 +111,25 @@ function createSupabaseClient() {
 
   if (!SUPABASE_URL || !SUPABASE_PUBLISHABLE_KEY) {
     const missing = [
-      ...(!SUPABASE_URL ? ['SUPABASE_URL'] : []),
-      ...(!SUPABASE_PUBLISHABLE_KEY ? ['SUPABASE_PUBLISHABLE_KEY'] : []),
+      ...(!SUPABASE_URL ? ["SUPABASE_URL"] : []),
+      ...(!SUPABASE_PUBLISHABLE_KEY ? ["SUPABASE_PUBLISHABLE_KEY"] : []),
     ];
-    const message = `Missing Supabase environment variable(s): ${missing.join(', ')}. Connect Supabase in Lovable Cloud.`;
-    console.error(`[Supabase] ${message}`);
-    throw new Error(message);
+    if (typeof console !== "undefined") {
+      console.warn(
+        `[Supabase] Missing environment variable(s): ${missing.join(", ")}. ` +
+          `Returning stub client so the UI can still render. Add the vars to your ` +
+          `deployment environment (e.g. Vercel dashboard → Settings → Environment Variables).`,
+      );
+    }
+    return createStubClient() as ReturnType<typeof createClient<Database>>;
   }
 
   return createClient<Database>(SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY, {
     auth: {
-      storage: typeof window !== 'undefined' ? localStorage : undefined,
+      storage: typeof window !== "undefined" ? localStorage : undefined,
       persistSession: true,
       autoRefreshToken: true,
-    }
+    },
   });
 }
 
