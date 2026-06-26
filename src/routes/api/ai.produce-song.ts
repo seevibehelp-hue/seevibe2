@@ -1,6 +1,6 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { generateText } from "ai";
-import { resolveModel, type ProviderRequest } from "@/lib/ai-gateway.server";
+import { resolveModel } from "@/lib/ai-gateway.server";
 import { requireAuth, sanitizeUserText } from "@/lib/api-auth.server";
 
 /**
@@ -23,29 +23,31 @@ export const Route = createFileRoute("/api/ai/produce-song")({
           if (auth instanceof Response) return auth;
 
           const body = (await request.json()) as {
-                        description: string;
-                        durationSec?: number;
-                        hasVocals?: boolean;
-                        seed?: string;
-                        region?: string;
-                        requestedGenre?: string;
-                        vocalAnalysis?: any;
-                        provider?: ProviderRequest;
-                      };
+            description: string;
+            durationSec?: number;
+            hasVocals?: boolean;
+            seed?: string;
+            region?: string;
+            requestedGenre?: string;
+            vocalAnalysis?: any;
+            providerId?: string | null;
+          };
 
-                      const description = sanitizeUserText(body.description, 500);
-                      if (!description) {
-                        return Response.json({ error: "description is required" }, { status: 400 });
-                      }
+          const description = sanitizeUserText(body.description, 500);
+          if (!description) {
+            return Response.json({ error: "description is required" }, { status: 400 });
+          }
 
-                      const durationSec = Math.min(Math.max(Number(body.durationSec) || 150, 120), 240);
-                      const hasVocals = Boolean(body.hasVocals);
-                      const seed = body.seed || Math.random().toString(36).slice(2);
-                      const region = sanitizeUserText(body.region, 60) || "unknown";
-                      const requestedGenre = sanitizeUserText(body.requestedGenre, 60);
+          const durationSec = Math.min(Math.max(Number(body.durationSec) || 150, 120), 240);
+          const hasVocals = Boolean(body.hasVocals);
+          const seed = body.seed || Math.random().toString(36).slice(2);
+          const region = sanitizeUserText(body.region, 60) || "unknown";
+          const requestedGenre = sanitizeUserText(body.requestedGenre, 60);
 
-                      const { model: resolvedModel } = await resolveModel(body.provider);
-                      const model = resolvedModel;
+          const { model: resolvedModel } = await resolveModel({
+            providerId: body.providerId ?? null,
+          });
+          const model = resolvedModel;
 
           // ─── Genre selection ────────────────────────────────────────────────
           const genreInstruction = requestedGenre
@@ -150,12 +152,15 @@ IMPORTANT RULES:
 5. Every chorus section must have signalEvent "crash" or "drop_silence" before it
 6. Every prechorus must have signalEvent "riser" or "snare_roll"
 7. hooks array contains a secondary call-and-response melody (different from melody array) — used during choruses only
-8. Make the song sound like a ${durationSec >= 180 ? 'full 3-minute chart hit' : 'radio-ready 2-minute banger'}`;
+8. Make the song sound like a ${durationSec >= 180 ? "full 3-minute chart hit" : "radio-ready 2-minute banger"}`;
 
           const result = await generateText({ model, system: systemPrompt, prompt: userPrompt });
 
           let raw = (result.text ?? "").trim();
-          raw = raw.replace(/^```(?:json)?/i, "").replace(/```$/i, "").trim();
+          raw = raw
+            .replace(/^```(?:json)?/i, "")
+            .replace(/```$/i, "")
+            .trim();
 
           let arrangement: any;
           try {
@@ -180,8 +185,16 @@ IMPORTANT RULES:
         } catch (err: any) {
           console.error("[ai/produce-song]", err);
           const status = Number(err?.statusCode ?? err?.status ?? 0);
-          if (status === 429) return Response.json({ error: "AI is busy — try again in a few seconds." }, { status: 429 });
-          if (status === 402) return Response.json({ error: "AI credits exhausted. Top up in Settings." }, { status: 402 });
+          if (status === 429)
+            return Response.json(
+              { error: "AI is busy — try again in a few seconds." },
+              { status: 429 },
+            );
+          if (status === 402)
+            return Response.json(
+              { error: "AI credits exhausted. Top up in Settings." },
+              { status: 402 },
+            );
           return Response.json({ error: err?.message ?? "AI error" }, { status: 500 });
         }
       },

@@ -1,22 +1,25 @@
 // @ts-nocheck
-import React, { useEffect, useState } from 'react';
-import { supabase } from '../../lib/supabase';
-import { X, Save, FolderOpen, Trash2 } from 'lucide-react';
-import { useDawStore, getFxDefaults } from '../../store/useDawStore';
+import React, { useEffect, useState } from "react";
+import { supabase } from "../../lib/supabase";
+import { X, Save, FolderOpen, Trash2 } from "lucide-react";
+import { useDawStore, getFxDefaults } from "../../store/useDawStore";
 
 export function ProjectsModal({ isOpen, onClose }: { isOpen: boolean; onClose: () => void }) {
   const [projects, setProjects] = useState<any[]>([]);
   const [loading, setLoading] = useState(false);
-  const [saveName, setSaveName] = useState('');
+  const [saveName, setSaveName] = useState("");
   const [user, setUser] = useState<any>(null);
   const [tableMissing, setTableMissing] = useState(false);
 
   useEffect(() => {
-    supabase.auth.getSession().then(({ data: { session } }) => {
-      setUser(session?.user || null);
-    }).catch(err => {
-      console.warn("Supabase session fetch failed in ProjectsModal:", err);
-    });
+    supabase.auth
+      .getSession()
+      .then(({ data: { session } }) => {
+        setUser(session?.user || null);
+      })
+      .catch((err) => {
+        console.warn("Supabase session fetch failed in ProjectsModal:", err);
+      });
   }, []);
 
   const fetchProjects = async () => {
@@ -24,13 +27,13 @@ export function ProjectsModal({ isOpen, onClose }: { isOpen: boolean; onClose: (
     setLoading(true);
     try {
       const { data, error } = await supabase
-        .from('studio_projects')
-        .select('*')
-        .eq('user_id', user.id)
-        .order('updated_at', { ascending: false });
-        
+        .from("studio_projects")
+        .select("*")
+        .eq("user_id", user.id)
+        .order("updated_at", { ascending: false });
+
       if (error) {
-        if (error.message.includes('Could not find the table')) {
+        if (error.message.includes("Could not find the table")) {
           setTableMissing(true);
         } else {
           throw error;
@@ -57,32 +60,41 @@ export function ProjectsModal({ isOpen, onClose }: { isOpen: boolean; onClose: (
   const handleSave = async (asNew: boolean = false) => {
     if (!user || !saveName.trim()) return;
     const state = useDawStore.getState();
-    const stateStr = JSON.stringify({
+    // Schema must match Studio.tsx autosave + offlineSync.queueChange:
+    // include projectKey / projectScale / purchasedPlugins / chatMessages
+    // so the round-trip through Save → Load preserves them.
+    const projectData = {
       tracks: state.tracks,
       clips: state.clips,
-      bpm: state.bpm
-    });
+      bpm: state.bpm,
+      projectKey: state.projectKey,
+      projectScale: state.projectScale,
+      purchasedPlugins: state.purchasedPlugins,
+      chatMessages: state.chatMessages,
+    };
 
     try {
       const payload: any = {
         user_id: user.id,
         title: saveName.trim(),
-        data: JSON.parse(stateStr),
-        updated_at: new Date().toISOString()
+        data: projectData,
+        bpm: state.bpm,
+        music_key: state.projectKey,
+        updated_at: new Date().toISOString(),
       };
-      
+
       if (!asNew && state.currentProjectId) {
         payload.id = state.currentProjectId;
       }
 
       const { data, error } = await supabase
-        .from('studio_projects')
+        .from("studio_projects")
         .upsert(payload)
         .select()
         .single();
-        
+
       if (error) {
-        if (error.message.includes('Could not find the table')) {
+        if (error.message.includes("Could not find the table")) {
           setTableMissing(true);
         } else {
           throw error;
@@ -99,25 +111,40 @@ export function ProjectsModal({ isOpen, onClose }: { isOpen: boolean; onClose: (
 
   const handleLoad = (project: any) => {
     try {
-      const parsed = (typeof project.data === 'string' && project.data !== 'undefined' && project.data.trim() !== '') ? JSON.parse(project.data) : (project.data || {});
-      
+      const parsed =
+        typeof project.data === "string" &&
+        project.data !== "undefined" &&
+        project.data.trim() !== ""
+          ? JSON.parse(project.data)
+          : project.data || {};
+
       const migratedTracks = (parsed.tracks || []).map((t: any) => ({
         ...t,
         clips: t.clips || [],
         fx: {
           ...getFxDefaults(),
-          ...(t.fx || {})
-        }
+          ...(t.fx || {}),
+        },
       }));
 
-      useDawStore.setState({ 
-        tracks: migratedTracks, 
+      useDawStore.setState({
+        tracks: migratedTracks,
         clips: parsed.clips || {},
         purchasedPlugins: parsed.purchasedPlugins || [],
-        chatMessages: parsed.chatMessages || [{ role: 'assistant', content: "Hey! I'm your AI production assistant. How can I help you with your project today?" }]
+        chatMessages: parsed.chatMessages || [
+          {
+            role: "assistant",
+            content:
+              "Hey! I'm your AI production assistant. How can I help you with your project today?",
+          },
+        ],
       });
       const store = useDawStore.getState();
       if (parsed.bpm) store.setBpm(parsed.bpm);
+      // Restore projectKey / projectScale if present in the saved payload
+      // (older saves predate this field — fallback to current store value).
+      if (parsed.projectKey) store.setProjectKey?.(parsed.projectKey);
+      if (parsed.projectScale) store.setProjectScale?.(parsed.projectScale);
       store.setCurrentProject(project.id, project.title);
       onClose();
     } catch (e) {
@@ -128,7 +155,7 @@ export function ProjectsModal({ isOpen, onClose }: { isOpen: boolean; onClose: (
   const handleDelete = async (id: string) => {
     if (!user) return;
     try {
-      const { error } = await supabase.from('studio_projects').delete().eq('id', id);
+      const { error } = await supabase.from("studio_projects").delete().eq("id", id);
       if (error) throw error;
       fetchProjects();
     } catch (e: any) {
@@ -152,10 +179,13 @@ export function ProjectsModal({ isOpen, onClose }: { isOpen: boolean; onClose: (
           {tableMissing && (
             <div className="mb-4 p-4 bg-red-500/20 border border-red-500/50 rounded text-red-200 text-sm">
               <strong className="block mb-1 font-bold">Supabase Database Setup Required</strong>
-              <p className="mb-2">It looks like the <code>studio_projects</code> table doesn't exist in your Supabase project.</p>
+              <p className="mb-2">
+                It looks like the <code>studio_projects</code> table doesn't exist in your Supabase
+                project.
+              </p>
               <p>Please run the following SQL query in your Supabase SQL Editor:</p>
               <pre className="mt-2 p-2 bg-[#111] rounded text-xs text-gray-300 overflow-x-auto">
-{`create table public.studio_projects (
+                {`create table public.studio_projects (
   id uuid default gen_random_uuid() primary key,
   user_id uuid references auth.users not null,
   title text not null default 'Untitled Project',
@@ -178,21 +208,22 @@ create policy "Users can delete their own projects" on public.studio_projects fo
             </div>
           )}
           <div className="flex gap-2 mb-6">
-            <input 
-              type="text" 
-              placeholder="Project Name..." 
+            <input
+              type="text"
+              placeholder="Project Name..."
               value={saveName}
               onChange={(e) => setSaveName(e.target.value)}
               className="flex-1 bg-[#222] border border-[#333] rounded px-3 py-2 text-white outline-none focus:border-[#00FF9C]"
             />
-            <button 
+            <button
               onClick={() => handleSave(false)}
               className="bg-[#00FF9C] text-black font-bold px-4 py-2 rounded flex items-center gap-2 hover:bg-[#00cc7d]"
             >
-              <Save size={16} /> {useDawStore.getState().currentProjectId ? 'Save / Update' : 'Save'}
+              <Save size={16} />{" "}
+              {useDawStore.getState().currentProjectId ? "Save / Update" : "Save"}
             </button>
             {useDawStore.getState().currentProjectId && (
-              <button 
+              <button
                 onClick={() => handleSave(true)}
                 className="bg-[#333] text-[#00FF9C] font-bold px-4 py-2 rounded flex items-center hover:bg-[#444]"
               >
@@ -206,28 +237,35 @@ create policy "Users can delete their own projects" on public.studio_projects fo
               <p className="text-gray-500 text-center py-4">Loading...</p>
             ) : projects.length === 0 ? (
               <p className="text-gray-500 text-center py-4">No projects saved.</p>
-            ) : projects.map(p => (
-              <div key={p.id} className="flex justify-between items-center bg-[#1A1A1A] p-3 rounded border border-[#2A2A2A]">
-                <div>
-                  <h3 className="text-white font-bold">{p.title}</h3>
-                  <p className="text-gray-500 text-xs">{new Date(p.updated_at || p.created_at || Date.now()).toLocaleString()}</p>
+            ) : (
+              projects.map((p) => (
+                <div
+                  key={p.id}
+                  className="flex justify-between items-center bg-[#1A1A1A] p-3 rounded border border-[#2A2A2A]"
+                >
+                  <div>
+                    <h3 className="text-white font-bold">{p.title}</h3>
+                    <p className="text-gray-500 text-xs">
+                      {new Date(p.updated_at || p.created_at || Date.now()).toLocaleString()}
+                    </p>
+                  </div>
+                  <div className="flex gap-2">
+                    <button
+                      onClick={() => handleLoad(p)}
+                      className="p-2 bg-[#222] text-[#00FF9C] rounded hover:bg-[#333]"
+                    >
+                      <FolderOpen size={16} />
+                    </button>
+                    <button
+                      onClick={() => handleDelete(p.id)}
+                      className="p-2 bg-[#222] text-red-500 rounded hover:bg-[#333]"
+                    >
+                      <Trash2 size={16} />
+                    </button>
+                  </div>
                 </div>
-                <div className="flex gap-2">
-                  <button 
-                    onClick={() => handleLoad(p)}
-                    className="p-2 bg-[#222] text-[#00FF9C] rounded hover:bg-[#333]"
-                  >
-                    <FolderOpen size={16} />
-                  </button>
-                  <button 
-                    onClick={() => handleDelete(p.id)}
-                    className="p-2 bg-[#222] text-red-500 rounded hover:bg-[#333]"
-                  >
-                    <Trash2 size={16} />
-                  </button>
-                </div>
-              </div>
-            ))}
+              ))
+            )}
           </div>
         </div>
       </div>

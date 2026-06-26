@@ -16,6 +16,12 @@ dist-ssr
 .nitro
 *.local
 
+# Environment files — MUST NEVER be committed (Supabase service_role_key
+# bypasses RLS and must stay server-only).
+.env
+.env.*
+!.env.example
+
 # Wrangler / Cloudflare
 .wrangler/
 .dev.vars
