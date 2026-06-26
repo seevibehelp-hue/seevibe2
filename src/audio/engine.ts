@@ -2018,47 +2018,64 @@ class AudioEngine {
       }
 
       // Dynamic CPU-saving routing (rebuilds chain only if FX toggle state changes)
-      const fxChain: any[] = [ctx.eq, ctx.compressor];
-      if (track.fx?.gate?.enabled && ctx.gate) fxChain.push(ctx.gate);
-      if (track.fx?.highpass?.enabled && ctx.highpass) fxChain.push(ctx.highpass);
-      if (track.fx?.lowpass?.enabled && ctx.lowpass) fxChain.push(ctx.lowpass);
-      if (track.fx?.bandpass?.enabled && ctx.bandpass) fxChain.push(ctx.bandpass);
-      if (track.fx?.distortion?.enabled && ctx.distortion) fxChain.push(ctx.distortion);
-      if (track.fx?.bitcrusher?.enabled && ctx.bitcrusher) fxChain.push(ctx.bitcrusher);
-      if (track.fx?.pitchShift?.enabled) fxChain.push(ctx.pitchShift);
-      if (track.fx?.voicePitcher?.enabled && ctx.voicePitcher) fxChain.push(ctx.voicePitcher);
-      if (track.fx?.phaser?.enabled && ctx.phaser) fxChain.push(ctx.phaser);
-      if (track.fx?.tremolo?.enabled && ctx.tremolo) fxChain.push(ctx.tremolo);
-      if (track.fx?.chorus?.enabled) fxChain.push(ctx.chorus);
-      if (track.fx?.delay?.enabled) fxChain.push(ctx.delay);
-      if (track.fx?.pingPongDelay?.enabled && ctx.pingPongDelay) fxChain.push(ctx.pingPongDelay);
-      if (track.fx?.reverb?.enabled) fxChain.push(ctx.reverb);
-      fxChain.push(ctx.channel);
+        // NOTE: latencyDelay sits between compressor and the optional FX block —
+        // it must be inside this rebuilt chain so Phase 1 latency compensation
+        // actually applies (otherwise the rebuild disconnects it from the chain).
+        const fxChain: any[] = [ctx.eq, ctx.compressor];
+        if (ctx.latencyDelay) fxChain.push(ctx.latencyDelay);
+        if (track.fx?.gate?.enabled && ctx.gate) fxChain.push(ctx.gate);
+        if (track.fx?.highpass?.enabled && ctx.highpass) fxChain.push(ctx.highpass);
+        if (track.fx?.lowpass?.enabled && ctx.lowpass) fxChain.push(ctx.lowpass);
+        if (track.fx?.bandpass?.enabled && ctx.bandpass) fxChain.push(ctx.bandpass);
+        if (track.fx?.distortion?.enabled && ctx.distortion) fxChain.push(ctx.distortion);
+        if (track.fx?.bitcrusher?.enabled && ctx.bitcrusher) fxChain.push(ctx.bitcrusher);
+        if (track.fx?.pitchShift?.enabled) fxChain.push(ctx.pitchShift);
+        if (track.fx?.voicePitcher?.enabled && ctx.voicePitcher) fxChain.push(ctx.voicePitcher);
+        if (track.fx?.phaser?.enabled && ctx.phaser) fxChain.push(ctx.phaser);
+        if (track.fx?.tremolo?.enabled && ctx.tremolo) fxChain.push(ctx.tremolo);
+        if (track.fx?.chorus?.enabled) fxChain.push(ctx.chorus);
+        if (track.fx?.delay?.enabled) fxChain.push(ctx.delay);
+        if (track.fx?.pingPongDelay?.enabled && ctx.pingPongDelay) fxChain.push(ctx.pingPongDelay);
+        if (track.fx?.reverb?.enabled) fxChain.push(ctx.reverb);
+        fxChain.push(ctx.channel);
 
-      const chainStr = fxChain.map((n: any) => n.name).join("->");
-      if (ctx.currentChainStr !== chainStr) {
-        ctx.currentChainStr = chainStr;
-        ctx.eq.disconnect();
-        ctx.compressor.disconnect();
-        ctx.pitchShift.disconnect();
-        ctx.chorus.disconnect();
-        ctx.delay.disconnect();
-        ctx.reverb.disconnect();
-        if (ctx.distortion) ctx.distortion.disconnect();
-        if (ctx.phaser) ctx.phaser.disconnect();
-        if (ctx.tremolo) ctx.tremolo.disconnect();
-        if (ctx.gate) ctx.gate.disconnect();
-        if (ctx.highpass) ctx.highpass.disconnect();
-        if (ctx.lowpass) ctx.lowpass.disconnect();
-        if (ctx.bandpass) ctx.bandpass.disconnect();
-        if (ctx.bitcrusher) ctx.bitcrusher.disconnect();
-        if (ctx.pingPongDelay) ctx.pingPongDelay.disconnect();
-        if (ctx.voicePitcher) ctx.voicePitcher.disconnect();
+        const chainStr = fxChain.map((n: any) => n.name).join("->");
+        if (ctx.currentChainStr !== chainStr) {
+          ctx.currentChainStr = chainStr;
+          ctx.eq.disconnect();
+          ctx.compressor.disconnect();
+          if (ctx.latencyDelay) ctx.latencyDelay.disconnect();
+          ctx.pitchShift.disconnect();
+          ctx.chorus.disconnect();
+          ctx.delay.disconnect();
+          ctx.reverb.disconnect();
+          if (ctx.distortion) ctx.distortion.disconnect();
+          if (ctx.phaser) ctx.phaser.disconnect();
+          if (ctx.tremolo) ctx.tremolo.disconnect();
+          if (ctx.gate) ctx.gate.disconnect();
+          if (ctx.highpass) ctx.highpass.disconnect();
+          if (ctx.lowpass) ctx.lowpass.disconnect();
+          if (ctx.bandpass) ctx.bandpass.disconnect();
+          if (ctx.bitcrusher) ctx.bitcrusher.disconnect();
+          if (ctx.pingPongDelay) ctx.pingPongDelay.disconnect();
+          if (ctx.voicePitcher) ctx.voicePitcher.disconnect();
 
-        for (let i = 0; i < fxChain.length - 1; i++) {
-          fxChain[i].connect(fxChain[i + 1]);
+          for (let i = 0; i < fxChain.length - 1; i++) {
+            fxChain[i].connect(fxChain[i + 1]);
+          }
+
+          // Reconnect the graphicEQ chain → eq so the synth signal isn't
+          // stranded at graphicEQ[9] after eq.disconnect(). createTrackContext
+          // wires graphicEQ[0..9] in series and graphicEQ[9] → eq, but Tone's
+          // disconnect() severs the downstream side and the rebuild above
+          // never re-establishes it. Without this, every clip (MIDI and audio)
+          // would route through graphicEQ into a dead end → silent playback.
+          if (ctx.graphicEQFilters && ctx.graphicEQFilters.length > 0) {
+            const last = ctx.graphicEQFilters[ctx.graphicEQFilters.length - 1];
+            try { last.disconnect(); } catch (e) {}
+            try { last.connect(ctx.eq); } catch (e) {}
+          }
         }
-      }
 
       // Routing for Track Grouping (only disconnect/connect when group changes to avoid dropouts)
       const prevGroupId = prevState?.tracks.find((t) => t.id === track.id)?.groupId;
