@@ -4,7 +4,14 @@ import { useDawStore } from "../store/useDawStore";
 import { DawTrack, SynthType, TrackType } from "../types/daw";
 import { analyzeAudioPitch } from "./vocalAnalysis";
 import { VocalPipeline } from "./engine/VocalPipeline";
-import { startLowLatencySynth, stopLowLatencySynth, stopAllLowLatencyVoices, playLowLatencyDrumHit, mapDrumNoteToType, renderReferenceDrumAt } from "./lowLatencySynth";
+import {
+  startLowLatencySynth,
+  stopLowLatencySynth,
+  stopAllLowLatencyVoices,
+  playLowLatencyDrumHit,
+  mapDrumNoteToType,
+  renderReferenceDrumAt,
+} from "./lowLatencySynth";
 import JSZip from "jszip";
 
 const globalBufferCache = new Map<string, Tone.ToneAudioBuffer>();
@@ -20,7 +27,7 @@ function encodeInt16PCM(
   channelData: Float32Array[],
   numChannels: number,
   length: number,
-  startPos: number
+  startPos: number,
 ): void {
   let pos = startPos;
   for (let i = 0; i < length; i++) {
@@ -52,7 +59,9 @@ function encodeInt16PCM(view, channelData, numChannels, length, startPos) {
 }
 `;
 
-const wavWorkerCode = _encodeInt16PCMSrc + `
+const wavWorkerCode =
+  _encodeInt16PCMSrc +
+  `
 self.onmessage = function(e) {
   const { channelData, sampleRate, numChannels, length, bitDepth = 16 } = e.data;
   const bytesPerSample = bitDepth / 8;
@@ -109,7 +118,7 @@ function encodeWavInWorker(audioBuffer: any, onProgress: (p: number) => void): P
     const numChannels = nativeBuf.numberOfChannels || 1;
     const sampleRate = nativeBuf.sampleRate || 44100;
     const length = nativeBuf.length || 0;
-    
+
     const channelData: Float32Array[] = [];
     for (let c = 0; c < numChannels; c++) {
       let data: Float32Array;
@@ -122,20 +131,20 @@ function encodeWavInWorker(audioBuffer: any, onProgress: (p: number) => void): P
       }
       channelData.push(data);
     }
-    
+
     function runSynchronousEncode() {
       try {
         const bytesPerSample = 2; // 16-bit PCM
         const blockAlign = numChannels * bytesPerSample;
         const wavBuffer = new ArrayBuffer(44 + length * blockAlign);
         const view = new DataView(wavBuffer);
-        
+
         const writeString = (v: DataView, offset: number, string: string) => {
           for (let idx = 0; idx < string.length; idx++) {
             v.setUint8(offset + idx, string.charCodeAt(idx));
           }
         };
-        
+
         // WAV Header
         writeString(view, 0, "RIFF");
         view.setUint32(4, 36 + length * blockAlign, true);
@@ -150,7 +159,7 @@ function encodeWavInWorker(audioBuffer: any, onProgress: (p: number) => void): P
         view.setUint16(34, 16, true);
         writeString(view, 36, "data");
         view.setUint32(40, length * blockAlign, true);
-        
+
         const totalFrames = length;
         const batchSize = Math.max(40000, Math.floor(totalFrames / 15));
         let i = 0;
@@ -172,7 +181,7 @@ function encodeWavInWorker(audioBuffer: any, onProgress: (p: number) => void): P
 
           const completionPercent = Math.min(99, Math.round(95 + (i / totalFrames) * 4));
           onProgress(completionPercent);
-          
+
           if (i < totalFrames) {
             setTimeout(processBatch, 0);
           } else {
@@ -180,7 +189,7 @@ function encodeWavInWorker(audioBuffer: any, onProgress: (p: number) => void): P
             resolve(finalBlob);
           }
         }
-        
+
         processBatch();
       } catch (encodeError) {
         reject(encodeError);
@@ -190,10 +199,10 @@ function encodeWavInWorker(audioBuffer: any, onProgress: (p: number) => void): P
     let worker: Worker | null = null;
     let workerUrl = "";
     try {
-      const workerBlob = new Blob([wavWorkerCode], { type: 'application/javascript' });
+      const workerBlob = new Blob([wavWorkerCode], { type: "application/javascript" });
       workerUrl = URL.createObjectURL(workerBlob);
       worker = new Worker(workerUrl);
-      
+
       const unsubscribe = useDawStore.subscribe((state) => {
         if (state.isExportCancelled) {
           if (worker) worker.terminate();
@@ -202,11 +211,11 @@ function encodeWavInWorker(audioBuffer: any, onProgress: (p: number) => void): P
           reject(new Error("Export aborted by user"));
         }
       });
-      
+
       worker.onmessage = (e) => {
-        if (e.data.type === 'progress') {
+        if (e.data.type === "progress") {
           onProgress(e.data.progress);
-        } else if (e.data.type === 'done') {
+        } else if (e.data.type === "done") {
           unsubscribe();
           if (worker) worker.terminate();
           if (workerUrl) URL.revokeObjectURL(workerUrl);
@@ -214,7 +223,7 @@ function encodeWavInWorker(audioBuffer: any, onProgress: (p: number) => void): P
           resolve(finalBlob);
         }
       };
-      
+
       worker.onerror = (err) => {
         console.warn("WAV Worker background error, running non-blocking synchronous fallback", err);
         unsubscribe();
@@ -222,16 +231,18 @@ function encodeWavInWorker(audioBuffer: any, onProgress: (p: number) => void): P
         if (workerUrl) URL.revokeObjectURL(workerUrl);
         runSynchronousEncode();
       };
-      
+
       worker.postMessage({
         channelData,
         sampleRate,
         numChannels,
-        length
+        length,
       });
-      
     } catch (workerError) {
-      console.warn("Failed to construct Worker context, falling back to non-blocking synchronous encoder", workerError);
+      console.warn(
+        "Failed to construct Worker context, falling back to non-blocking synchronous encoder",
+        workerError,
+      );
       if (workerUrl) URL.revokeObjectURL(workerUrl);
       runSynchronousEncode();
     }
@@ -274,7 +285,12 @@ interface TrackContext {
   isRecording?: boolean;
   recordingStartTimeCtx?: number;
   liveRecordingPeaks?: number[];
-  liveRecordingSegments?: { start16thsOffset: number, duration16ths: number, peaks: number[], audioOffset16ths: number }[];
+  liveRecordingSegments?: {
+    start16thsOffset: number;
+    duration16ths: number;
+    peaks: number[];
+    audioOffset16ths: number;
+  }[];
   recordingInterval?: any;
   currentChainStr?: string;
 }
@@ -304,14 +320,14 @@ class DrumVoice {
       octaves: 4,
       oscillator: { type: "sine" },
       envelope: { attack: 0.001, decay: 0.3, sustain: 0.01, release: 0.3 },
-      volume: -16
+      volume: -16,
     });
 
     this.snareFilter = new Tone.Filter({ type: "highpass", frequency: 1000 });
     this.snare = new Tone.NoiseSynth({
       noise: { type: "white" },
       envelope: { attack: 0.001, decay: 0.2, sustain: 0, release: 0.2 },
-      volume: -20
+      volume: -20,
     }).connect(this.snareFilter);
 
     this.snareTone = new Tone.MembraneSynth({
@@ -319,14 +335,14 @@ class DrumVoice {
       octaves: 2,
       oscillator: { type: "sine" },
       envelope: { attack: 0.001, decay: 0.15, sustain: 0, release: 0.1 },
-      volume: -18
+      volume: -18,
     });
 
     this.hatFilter = new Tone.Filter({ type: "highpass", frequency: 8000 });
     this.hat = new Tone.NoiseSynth({
       noise: { type: "white" },
       envelope: { attack: 0.001, decay: 0.04, sustain: 0, release: 0.04 },
-      volume: -18
+      volume: -18,
     }).connect(this.hatFilter);
 
     this.tom = new Tone.MembraneSynth({
@@ -334,14 +350,14 @@ class DrumVoice {
       octaves: 3,
       oscillator: { type: "sine" },
       envelope: { attack: 0.001, decay: 0.5, sustain: 0, release: 0.5 },
-      volume: -16
+      volume: -16,
     });
 
     this.clapFilter = new Tone.Filter({ type: "bandpass", frequency: 1500 });
     this.clap = new Tone.NoiseSynth({
       noise: { type: "white" },
       envelope: { attack: 0.001, decay: 0.3, sustain: 0, release: 0.1 },
-      volume: -16
+      volume: -16,
     }).connect(this.clapFilter);
 
     this.crash = new Tone.MetalSynth({
@@ -350,7 +366,7 @@ class DrumVoice {
       modulationIndex: 32,
       resonance: 4000,
       octaves: 1.5,
-      volume: -20
+      volume: -20,
     });
     this.crash.frequency.value = 200;
 
@@ -360,7 +376,7 @@ class DrumVoice {
       modulationIndex: 12,
       resonance: 800,
       octaves: 1,
-      volume: -16
+      volume: -16,
     });
     this.cowbell.frequency.value = 400;
 
@@ -369,7 +385,7 @@ class DrumVoice {
       modulationIndex: 20,
       oscillator: { type: "square" },
       envelope: { attack: 0.01, decay: 0.5, sustain: 0.2, release: 0.5 },
-      volume: -20
+      volume: -20,
     });
   }
 
@@ -423,7 +439,8 @@ class ReferenceDrumKitSynth {
   }
 
   toDestination() {
-    this.destination = ((Tone.getDestination() as any)?.input || Tone.getDestination()) as AudioNode;
+    this.destination = ((Tone.getDestination() as any)?.input ||
+      Tone.getDestination()) as AudioNode;
     return this;
   }
 
@@ -432,7 +449,12 @@ class ReferenceDrumKitSynth {
     this.disposed = true;
   }
 
-  triggerAttackRelease(note: string | string[], _duration: string | number, time?: any, velocity?: number) {
+  triggerAttackRelease(
+    note: string | string[],
+    _duration: string | number,
+    time?: any,
+    velocity?: number,
+  ) {
     this.triggerAttack(note, time, velocity);
   }
 
@@ -440,10 +462,16 @@ class ReferenceDrumKitSynth {
     if (this.disposed || !this.destination) return;
     const ctx = Tone.getContext().rawContext as AudioContext;
     const notes = Array.isArray(note) ? note : [note];
-    const startTime = typeof time === 'number' ? time : Tone.immediate();
+    const startTime = typeof time === "number" ? time : Tone.immediate();
     const safeVelocity = Math.min(1, Math.max(0, velocity ?? 0.8));
     notes.forEach((value) => {
-      renderReferenceDrumAt(ctx, this.destination!, mapDrumNoteToType(value), startTime, safeVelocity);
+      renderReferenceDrumAt(
+        ctx,
+        this.destination!,
+        mapDrumNoteToType(value),
+        startTime,
+        safeVelocity,
+      );
     });
   }
 
@@ -463,9 +491,9 @@ class AudioEngine {
   private async _acquireWakeLock() {
     if (this._wakeLock) return; // already held
     try {
-      if (typeof navigator !== 'undefined' && 'wakeLock' in navigator) {
-        this._wakeLock = await (navigator as any).wakeLock.request('screen');
-        this._wakeLock?.addEventListener('release', () => {
+      if (typeof navigator !== "undefined" && "wakeLock" in navigator) {
+        this._wakeLock = await (navigator as any).wakeLock.request("screen");
+        this._wakeLock?.addEventListener("release", () => {
           this._wakeLock = null;
         });
       }
@@ -473,7 +501,9 @@ class AudioEngine {
   }
 
   private _releaseWakeLock() {
-    try { this._wakeLock?.release(); } catch (_) {}
+    try {
+      this._wakeLock?.release();
+    } catch (_) {}
     this._wakeLock = null;
   }
   private audioBufferCache: Map<string, Tone.ToneAudioBuffer> = new Map();
@@ -503,7 +533,12 @@ class AudioEngine {
   public isInitialized = false;
 
   // Visualizer / Waveform peaks while recording
-  public liveRecordingSegments: { start16thsOffset: number, duration16ths: number, peaks: number[], audioOffset16ths: number }[] = [];
+  public liveRecordingSegments: {
+    start16thsOffset: number;
+    duration16ths: number;
+    peaks: number[];
+    audioOffset16ths: number;
+  }[] = [];
   public currentRecordingPeakLevel: number = 0;
 
   /**
@@ -524,71 +559,127 @@ class AudioEngine {
 
   // MIDI support
   private midiInputs: Map<string, MIDIInput> = new Map();
-  public activeMidiRecordings: Map<string, Map<string, { clipId: string; noteId: string; start16ths: number }>> = new Map();
+  public activeMidiRecordings: Map<
+    string,
+    Map<string, { clipId: string; noteId: string; start16ths: number }>
+  > = new Map();
   // Sustain pedal (CC 64) state per MIDI channel
   private midiSustainHeld: Map<number, boolean> = new Map();
   // Notes held open by sustain, keyed by "channel:note"
   private midiSustainedNotes: Map<string, { trackId: string; noteName: string }> = new Map();
 
   constructor() {
-    // Real-time master chain kept intentionally conservative for mobile stability.
-    this.masterLimiter = new Tone.Limiter(-1).toDestination();
-    
+    // Master chain nodes MUST be created against a live AudioContext.
+    // Tone.js creates a lazy default context, but on some browsers (esp.
+    // mobile) AudioContext construction requires a user gesture and
+    // throws if invoked at module load. We defer ALL Tone node creation
+    // to setupMasterChain(), which is called from init() after the
+    // context has been explicitly created and started.
+    this.initMidi();
+    this.installVisibilityHandler();
+  }
+
+  private masterChainReady = false;
+
+  /**
+   * Build the master signal chain against the active Tone.js context.
+   * Idempotent — safe to call multiple times. No-op if already built.
+   *
+   * Must run AFTER init() has set up the proper AudioContext via
+   * Tone.setContext() + Tone.start(), otherwise the nodes reference
+   * a dead/never-started context and any subsequent `.connect()` call
+   * throws "parameter 1 is not of type 'AudioNode'".
+   */
+  private setupMasterChain(): void {
+    if (this.masterChainReady) return;
+
+    // Dispose any half-built nodes from a prior failed init so we start clean.
+    this.disposeMasterChain();
+
     const initialVolume = useDawStore.getState().masterVolume ?? 0;
-    // -6 dB padding provides perfect high-precision summing headroom in modern 32-bit float audio engines
+
+    this.masterLimiter = new Tone.Limiter(-1).toDestination();
     this.masterHeadroom = new Tone.Volume(initialVolume - 6);
-    
-    // Transparent glue compression — barely touches peaks, never audibly pumps.
     this.masterCompressor = new Tone.Compressor({
       threshold: -6,
       ratio: 1.5,
       attack: 0.02,
-      release: 0.25
+      release: 0.25,
     });
+    this.masterTrim = new Tone.Volume(-1.3);
 
-    // Keep a small safety trim in real-time to avoid speaker-tear artifacts on mobile.
-    this.masterTrim = new Tone.Volume(-1.3) // safety trim (was misnamed masterMaximizer);
-    
     this.masterHeadroom.connect(this.masterCompressor);
     this.masterCompressor.connect(this.masterTrim);
     this.masterTrim.connect(this.masterLimiter);
 
-    // Shared return buses — instantiated once, shared across all tracks.
-    // Default settings match what each track was instantiating individually.
     this.sharedReverb = new Tone.Freeverb({ roomSize: 0.7, dampening: 3000, wet: 1 });
     this.sharedReverb.connect(this.masterHeadroom);
 
-    this.sharedDelay = new Tone.FeedbackDelay({ delayTime: '8n', feedback: 0.3, wet: 1 });
+    this.sharedDelay = new Tone.FeedbackDelay({ delayTime: "8n", feedback: 0.3, wet: 1 });
     this.sharedDelay.connect(this.masterHeadroom);
-    
+
     this.recorder = new Tone.Recorder();
     this.meter = new Tone.Meter();
     this.pitchAnalyser = new Tone.Analyser("waveform", 2048);
 
-    // micChannel: kept as a dummy node for disposal safety only.
-    // Nothing connects into it — monitoring runs entirely through per-track
-    // ctx.micNode → ctx.graphicEQFilters → ctx.eq → ctx.channel paths.
+    // Dummy mic channel — kept for disposal safety. Monitoring runs through
+    // per-track ctx.micNode paths, not here.
     this.micChannel = new Tone.Channel().connect(this.masterHeadroom);
-    this.micChannel.mute = true; // permanently muted — dead signal path
+    this.micChannel.mute = true;
     this.metronomeSynth = new Tone.MembraneSynth({ volume: -14 }).connect(this.masterHeadroom);
 
-    this.initMidi();
-    this.installVisibilityHandler();
+    this.masterChainReady = true;
+  }
+
+  private disposeMasterChain(): void {
+    try {
+      this.masterLimiter?.dispose();
+    } catch (_) {}
+    try {
+      this.masterHeadroom?.dispose();
+    } catch (_) {}
+    try {
+      this.masterCompressor?.dispose();
+    } catch (_) {}
+    try {
+      this.masterTrim?.dispose();
+    } catch (_) {}
+    try {
+      this.sharedReverb?.dispose();
+    } catch (_) {}
+    try {
+      this.sharedDelay?.dispose();
+    } catch (_) {}
+    try {
+      this.micChannel?.dispose();
+    } catch (_) {}
+    try {
+      this.metronomeSynth?.dispose();
+    } catch (_) {}
+    try {
+      this.recorder?.dispose();
+    } catch (_) {}
+    try {
+      this.meter?.dispose();
+    } catch (_) {}
+    try {
+      this.pitchAnalyser?.dispose();
+    } catch (_) {}
   }
 
   private visibilityHandlerInstalled = false;
   private installVisibilityHandler() {
     if (this.visibilityHandlerInstalled) return;
-    if (typeof document === 'undefined') return;
+    if (typeof document === "undefined") return;
     this.visibilityHandlerInstalled = true;
-    document.addEventListener('visibilitychange', () => {
-      if (document.visibilityState === 'visible') {
+    document.addEventListener("visibilitychange", () => {
+      if (document.visibilityState === "visible") {
         // Rebuild audio-clip players that mobile WebViews drop when backgrounded.
         this.refreshAudioPlayersAfterResume();
       }
     });
-    window.addEventListener('pageshow', () => {
-      if (document.visibilityState === 'visible') {
+    window.addEventListener("pageshow", () => {
+      if (document.visibilityState === "visible") {
         this.refreshAudioPlayersAfterResume();
       }
     });
@@ -649,19 +740,15 @@ class AudioEngine {
       if (track.type !== "midi") return;
 
       const channelMatch =
-        !track.midiChannel ||
-        track.midiChannel === 0 ||
-        track.midiChannel === channel;
+        !track.midiChannel || track.midiChannel === 0 || track.midiChannel === channel;
       const deviceMatch =
-        !track.midiInputId ||
-        track.midiInputId === "all" ||
-        track.midiInputId === inputId;
+        !track.midiInputId || track.midiInputId === "all" || track.midiInputId === inputId;
 
       if (channelMatch && deviceMatch) {
         // Only trigger "All Inputs" devices if the track is armed or selected
-        const hasArmedMidi = state.tracks.some(t => t.type === 'midi' && t.armed);
+        const hasArmedMidi = state.tracks.some((t) => t.type === "midi" && t.armed);
         const isActiveTarget = track.armed || (!hasArmedMidi && track.id === state.selectedTrackId);
-        
+
         if (track.midiInputId === "all" && !isActiveTarget) {
           return;
         }
@@ -678,7 +765,7 @@ class AudioEngine {
           }
 
           if (state.isRecording && isActiveTarget) {
-             this.recordMidiNoteStart(track.id, pcNote, velocity / 127);
+            this.recordMidiNoteStart(track.id, pcNote, velocity / 127);
           }
 
           // Visual feedback
@@ -703,30 +790,26 @@ class AudioEngine {
               window.dispatchEvent(new CustomEvent("midi-note-off", { detail: { note: pcNote } }));
             }
           }
-
         } else if (command === 176) {
           // Control Change
-          const ccNum   = note;      // second byte = CC number
-          const ccVal   = velocity;  // third byte  = value (0-127)
-          const ctx     = this.trackContexts.get(track.id);
+          const ccNum = note; // second byte = CC number
+          const ccVal = velocity; // third byte  = value (0-127)
+          const ctx = this.trackContexts.get(track.id);
 
           if (ccNum === 1) {
             // Mod wheel → tremolo depth
             if (ctx?.tremolo) ctx.tremolo.depth.rampTo(ccVal / 127, 0.05);
-
           } else if (ccNum === 7) {
             // Channel volume → track fader (dB scale: 0→-inf, 64→0dB, 127→+6dB)
             if (ctx?.channel) {
               const db = ccVal === 0 ? -Infinity : (ccVal / 127) * 12 - 6;
               ctx.channel.volume.rampTo(db, 0.05);
             }
-
           } else if (ccNum === 10) {
             // Pan → track pan
             if (ctx?.channel) {
               ctx.channel.pan.rampTo((ccVal - 64) / 64, 0.05);
             }
-
           } else if (ccNum === 64) {
             // Sustain pedal
             const pedal = ccVal >= 64;
@@ -736,12 +819,12 @@ class AudioEngine {
               for (const [key, held] of this.midiSustainedNotes.entries()) {
                 if (key.startsWith(`${channel}:`)) {
                   stopLowLatencySynth(held.noteName, track.synthType || "poly");
-                  if (state.isRecording && isActiveTarget) this.recordMidiNoteEnd(held.trackId, held.noteName);
+                  if (state.isRecording && isActiveTarget)
+                    this.recordMidiNoteEnd(held.trackId, held.noteName);
                   this.midiSustainedNotes.delete(key);
                 }
               }
             }
-
           } else if (ccNum === 74) {
             // Brightness / filter cutoff → lowpass filter frequency
             if (ctx?.lowpass) {
@@ -749,21 +832,18 @@ class AudioEngine {
               const freq = 200 * Math.pow(90, ccVal / 127);
               ctx.lowpass.frequency.rampTo(freq, 0.05);
             }
-
           } else if (ccNum === 121) {
             // Reset all controllers
             this.midiSustainHeld.set(channel, false);
             if (ctx?.tremolo) ctx.tremolo.depth.rampTo(0, 0.05);
-
           } else if (ccNum === 123) {
             // All notes off
             stopAllLowLatencyVoices();
           }
-
         } else if (command === 224) {
           // Pitch bend — 14-bit signed value centred at 8192
           const pitchValue = ((velocity << 7) | note) - 8192; // -8192 to +8191
-          const semitones  = (pitchValue / 8192) * 2;          // ±2 semitone range
+          const semitones = (pitchValue / 8192) * 2; // ±2 semitone range
           const ctx = this.trackContexts.get(track.id);
           if (ctx?.pitchShift) {
             ctx.pitchShift.pitch = semitones;
@@ -772,7 +852,6 @@ class AudioEngine {
           if (track.id === state.selectedTrackId) {
             window.dispatchEvent(new CustomEvent("midi-pitch-bend", { detail: { semitones } }));
           }
-
         } else if (command === 208) {
           // Channel aftertouch → modulate tremolo / filter brightness
           const pressure = velocity / 127;
@@ -788,9 +867,9 @@ class AudioEngine {
       // Prompt for permission if haven't already so labels can be read
       try {
         const tempStream = await navigator.mediaDevices.getUserMedia({ audio: true });
-        tempStream.getTracks().forEach(t => t.stop());
-      } catch(e) {}
-      
+        tempStream.getTracks().forEach((t) => t.stop());
+      } catch (e) {}
+
       const devices = await navigator.mediaDevices.enumerateDevices();
       const inputs = devices
         .filter((d) => d.kind === "audioinput")
@@ -825,13 +904,23 @@ class AudioEngine {
       try {
         const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
         if (AudioCtx) {
-          const ctx = new AudioCtx({ latencyHint: 'interactive', sampleRate: 44100 });
+          const ctx = new AudioCtx({ latencyHint: "interactive", sampleRate: 44100 });
           Tone.setContext(ctx);
         }
       } catch (_) {}
 
       await Tone.start();
       console.log("Audio Engine Started");
+
+      // Build the master chain against the now-live context. This is the
+      // critical fix — constructing these Tone nodes at module load (in the
+      // constructor) referenced a not-yet-started AudioContext, so subsequent
+      // .connect() calls threw "parameter 1 is not of type 'AudioNode'".
+      try {
+        this.setupMasterChain();
+      } catch (e) {
+        console.error("[AudioEngine] setupMasterChain failed:", e);
+      }
 
       // Start with a conservative lookahead; tightened dynamically for live input.
       Tone.getContext().lookAhead = 0.05;
@@ -856,21 +945,21 @@ class AudioEngine {
 
           // Real-time automation envelope controller
           const current16th = Math.floor(currentPos) % 16;
-          state.tracks.forEach(track => {
+          state.tracks.forEach((track) => {
             if (track.automationEnabled && track.automationCurve && track.automationType) {
               const val = track.automationCurve[current16th];
               if (val !== undefined && val !== null) {
                 const ctx = this.trackContexts.get(track.id);
                 if (ctx) {
-                  if (track.automationType === 'lowpass' && ctx.lowpass) {
+                  if (track.automationType === "lowpass" && ctx.lowpass) {
                     // Map 0-1 logarithmically to 150Hz - 16000Hz for incredible analog synth sweeps
                     const targetFreq = Math.round(150 * Math.pow(106, val));
                     ctx.lowpass.frequency.rampTo(targetFreq, 0.05);
-                  } else if (track.automationType === 'reverb' && ctx.reverb) {
+                  } else if (track.automationType === "reverb" && ctx.reverb) {
                     ctx.reverb.wet.rampTo(val, 0.05);
-                  } else if (track.automationType === 'volume' && ctx.channel) {
+                  } else if (track.automationType === "volume" && ctx.channel) {
                     // Map 0-1 to fader volume db ranges (-36dB to +6dB)
-                    const targetDb = val === 0 ? -99 : -36 + (val * 42);
+                    const targetDb = val === 0 ? -99 : -36 + val * 42;
                     ctx.channel.volume.rampTo(targetDb, 0.05);
                   }
                 }
@@ -879,8 +968,8 @@ class AudioEngine {
           });
 
           // Real-time Sidechain compression fader simulation (FL Studio pumping style)
-          const isKickStep = (current16th % 4 === 0);
-          state.tracks.forEach(track => {
+          const isKickStep = current16th % 4 === 0;
+          state.tracks.forEach((track) => {
             const ctx = this.trackContexts.get(track.id);
             if (ctx && ctx.channel) {
               if (track.fx?.sidechain?.enabled) {
@@ -902,22 +991,24 @@ class AudioEngine {
           // -------------------------------------------------------------
           // FL Gross Beat / Time-Shaping Engine simulation
           // -------------------------------------------------------------
-          state.tracks.forEach(track => {
+          state.tracks.forEach((track) => {
             const ctx = this.trackContexts.get(track.id);
             if (ctx && track.fx?.timeShaper?.enabled) {
-              const mode = track.fx.timeShaper.mode || 'off';
+              const mode = track.fx.timeShaper.mode || "off";
               const mix = track.fx.timeShaper.mix ?? 1.0;
-              const curve = track.fx.timeShaper.curve || [1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1];
+              const curve = track.fx.timeShaper.curve || [
+                1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
+              ];
               const stepInBar = current16th % 16;
               const curveVal = curve[stepInBar] ?? 1.0;
-              
-              if (mode === 'half') {
+
+              if (mode === "half") {
                 // Pitch shift dropped by 12 steps (one octave down) to emulate Half-Time vinyl slow down
                 if (ctx.pitchShift) {
                   ctx.pitchShift.pitch = -12;
                   ctx.pitchShift.wet.value = mix;
                 }
-              } else if (mode === 'reverse') {
+              } else if (mode === "reverse") {
                 // Vinyl tape stop glide scratch simulation
                 // Every 8 steps, ramp pitch from 0 down to -24 to simulate turntable slowdown
                 const barPosition = current16th % 8;
@@ -931,10 +1022,10 @@ class AudioEngine {
                     ctx.pitchShift.pitch = targetPitch;
                   }
                 }
-              } else if (mode === 'gate') {
+              } else if (mode === "gate") {
                 // Gated rhythm chop (e.g. 1/3 gating or custom trance rhythmic chop)
                 // We create a staccato pulse: mute on alternate steps or every 3rd step
-                const shouldMute = (current16th % 3 === 0);
+                const shouldMute = current16th % 3 === 0;
                 if (ctx.channel) {
                   if (shouldMute) {
                     ctx.channel.volume.setValueAtTime(-99, time);
@@ -943,16 +1034,17 @@ class AudioEngine {
                     ctx.channel.volume.setValueAtTime(baseVol, time);
                   }
                 }
-              } else if (mode === 'custom') {
+              } else if (mode === "custom") {
                 // Highly customizable user-drawn envelope curve tracker!
                 // Can sweep both pitch and gate volumes!
                 if (ctx.channel) {
                   const baseVol = track.volume ?? 0;
                   // Map curveVal (0.0 to 1.0) to decibel ducking (down to -80dB)
-                  const targetVol = curveVal <= 0.05 ? -99 : Math.max(-99, baseVol + 20 * Math.log10(curveVal));
+                  const targetVol =
+                    curveVal <= 0.05 ? -99 : Math.max(-99, baseVol + 20 * Math.log10(curveVal));
                   ctx.channel.volume.setValueAtTime(targetVol, time);
                 }
-                
+
                 if (ctx.pitchShift) {
                   // Connect curveVal directly to slide pitch (pitch shifts down on lower envelope points to simulate vinyl slows/stop!)
                   const targetPitch = (curveVal - 1.0) * 18; // slide down to -18 semitones
@@ -972,37 +1064,40 @@ class AudioEngine {
           // Fruity Peak Controller Internal Modulation Routing
           // -------------------------------------------------------------
           // Scan all active peak controller configurations
-          state.tracks.forEach(track => {
+          state.tracks.forEach((track) => {
             const ctx = this.trackContexts.get(track.id);
             if (ctx && track.fx?.peakController?.enabled && track.fx.peakController.sourceTrackId) {
               const sourceTrackId = track.fx.peakController.sourceTrackId;
-              const targetParam = track.fx.peakController.targetParam || 'none';
+              const targetParam = track.fx.peakController.targetParam || "none";
               const depth = track.fx.peakController.depth ?? 0.5;
-              
+
               const srcCtx = this.trackContexts.get(sourceTrackId);
               if (srcCtx && srcCtx.meter) {
                 // Read signal RMS amplitude level in Db
                 const rawVal = srcCtx.meter.getValue();
                 const db = Array.isArray(rawVal) ? rawVal[0] : (rawVal as number);
-                
+
                 // Convert DB to raw linear amplitude (0.0 to 1.0 range)
                 let amplitude = Math.pow(10, db / 20);
                 if (isNaN(amplitude) || amplitude < 0.01) amplitude = 0;
                 if (amplitude > 1.0) amplitude = 1.0;
-                
+
                 // Scale according to controller depth
                 const modVal = amplitude * depth;
-                
-                if (targetParam === 'lowpass' && ctx.lowpass) {
+
+                if (targetParam === "lowpass" && ctx.lowpass) {
                   // Sweep lowpass cutoff filter downwards relative to amplitude peak (classic pumping swipe!)
                   const maxFreq = 20000;
                   const minFreq = 150;
-                  const targetCutoff = Math.round(maxFreq - (modVal * (maxFreq - minFreq)));
-                  ctx.lowpass.frequency.rampTo(Math.max(minFreq, Math.min(maxFreq, targetCutoff)), 0.05);
-                } else if (targetParam === 'reverb' && ctx.reverb) {
+                  const targetCutoff = Math.round(maxFreq - modVal * (maxFreq - minFreq));
+                  ctx.lowpass.frequency.rampTo(
+                    Math.max(minFreq, Math.min(maxFreq, targetCutoff)),
+                    0.05,
+                  );
+                } else if (targetParam === "reverb" && ctx.reverb) {
                   // Boost reverb wet amount directly in tandem with sound peaks
                   ctx.reverb.wet.rampTo(modVal, 0.05);
-                } else if (targetParam === 'volume' && ctx.channel) {
+                } else if (targetParam === "volume" && ctx.channel) {
                   // Duck volume relative to peak input (custom sidechain pumping effect)
                   const baseVol = track.volume ?? 0;
                   const duckAmountDb = modVal * -24; // duck up to -24dB at max peaks
@@ -1037,72 +1132,81 @@ class AudioEngine {
   public async syncAudioInputsWithTracks() {
     if (!this.isInitialized) return;
     const state = useDawStore.getState();
-    
+
     for (const track of state.tracks) {
       if (track.type !== "audio") continue;
-      
+
       let ctx = this.trackContexts.get(track.id);
       if (!ctx) continue;
 
       // Determine the target device ID
       const targetDeviceId = track.audioInputId || state.selectedAudioInputId || "default";
       const currentStreamId = (ctx as any).currentDeviceId;
-      
+
       if (!ctx.micStream || currentStreamId !== targetDeviceId || !ctx.recorder) {
         // Stop and cleanup previous
         if (ctx.micNode) {
-          try { ctx.micNode.disconnect(); } catch (e) {}
+          try {
+            ctx.micNode.disconnect();
+          } catch (e) {}
         }
         if (ctx.inputGain) {
-          try { ctx.inputGain.dispose(); } catch (e) {}
+          try {
+            ctx.inputGain.dispose();
+          } catch (e) {}
         }
         if (ctx.inputLimiter) {
-          try { ctx.inputLimiter.dispose(); } catch (e) {}
+          try {
+            ctx.inputLimiter.dispose();
+          } catch (e) {}
         }
         if (ctx.recorder) {
-          try { ctx.recorder.dispose(); } catch (e) {}
+          try {
+            ctx.recorder.dispose();
+          } catch (e) {}
         }
         if (ctx.micStream) {
-          ctx.micStream.getTracks().forEach(t => t.stop());
+          ctx.micStream.getTracks().forEach((t) => t.stop());
         }
 
         try {
           const stream = await navigator.mediaDevices.getUserMedia({
-              audio: targetDeviceId === "default"
+            audio:
+              targetDeviceId === "default"
                 ? {
                     echoCancellation: false,
                     noiseSuppression: false,
-                    autoGainControl: false
+                    autoGainControl: false,
                   }
                 : {
                     deviceId: { exact: targetDeviceId },
                     echoCancellation: false,
                     noiseSuppression: false,
-                    autoGainControl: false
-                  }
-            });
-          
+                    autoGainControl: false,
+                  },
+          });
+
           ctx.micStream = stream;
           (ctx as any).currentDeviceId = targetDeviceId;
-          
+
           ctx.inputGain = new Tone.Gain(1.0); // Unity gain — let user control level via track fader
           ctx.micNode = new Tone.Gain(1);
-          
+
           const rawContext = Tone.getContext().rawContext as any;
           const sourceNode = rawContext.createMediaStreamSource(stream);
           sourceNode.connect((ctx.inputGain as any).input);
           ctx.inputGain.connect(ctx.micNode.input);
-          
+
           ctx.recorder = new Tone.Recorder();
           ctx.micNode.connect(ctx.recorder);
           if (ctx.meter) {
-             ctx.micNode.connect(ctx.meter);
+            ctx.micNode.connect(ctx.meter);
           }
         } catch (err) {
           console.error(`Failed to setup inputs for track ${track.name}:`, err);
         }
       }
-      
+
       // Control monitoring: Only route to channel FX chains if this track is selected AND input monitoring is on
       if (ctx.micNode) {
         try {
@@ -1129,7 +1233,7 @@ class AudioEngine {
 
   public getTrackLevel(trackId: string): number {
     const state = useDawStore.getState();
-    const track = state.tracks.find(t => t.id === trackId);
+    const track = state.tracks.find((t) => t.id === trackId);
     if (!track) return 0;
 
     const ctx = this.trackContexts.get(trackId);
@@ -1150,67 +1254,74 @@ class AudioEngine {
 
   public recordMidiNoteStart(trackId: string, noteName: string, velocity: number) {
     const state = useDawStore.getState();
-    const currentTicks = Tone.Transport.state === 'started' ? Tone.Transport.ticks : (state.transportPosition * 48);
+    const currentTicks =
+      Tone.Transport.state === "started" ? Tone.Transport.ticks : state.transportPosition * 48;
     const current16ths = currentTicks / 48;
 
-    const trackClips = Object.values(state.clips).filter(c => c.trackId === trackId);
-    let activeClip = trackClips.find(c => current16ths >= c.startTime && current16ths <= c.startTime + (c.duration || 32));
+    const trackClips = Object.values(state.clips).filter((c) => c.trackId === trackId);
+    let activeClip = trackClips.find(
+      (c) => current16ths >= c.startTime && current16ths <= c.startTime + (c.duration || 32),
+    );
 
     const quantize = (val: number) => {
-       if (!state.autoQuantize) return val;
-       const strength = state.quantizeStrength / 100;
-       const nearest16th = Math.round(val);
-       return val + (nearest16th - val) * strength;
+      if (!state.autoQuantize) return val;
+      const strength = state.quantizeStrength / 100;
+      const nearest16th = Math.round(val);
+      return val + (nearest16th - val) * strength;
     };
 
     const noteId = `n_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
 
     if (!activeClip) {
-       const clipStartTime = Math.floor(current16ths / 16) * 16;
-       const relativeStart = Math.max(0, current16ths - clipStartTime);
-       const startToRecord = quantize(relativeStart);
-       const startGlobalToRecord = clipStartTime + startToRecord;
+      const clipStartTime = Math.floor(current16ths / 16) * 16;
+      const relativeStart = Math.max(0, current16ths - clipStartTime);
+      const startToRecord = quantize(relativeStart);
+      const startGlobalToRecord = clipStartTime + startToRecord;
 
-       const newNote = {
-         id: noteId,
-         note: noteName,
-         startTime: startToRecord,
-         duration: 0.1,
-         velocity,
-         isRecording: true
-       };
+      const newNote = {
+        id: noteId,
+        note: noteName,
+        startTime: startToRecord,
+        duration: 0.1,
+        velocity,
+        isRecording: true,
+      };
 
-       const newClipId = state.addClip(trackId, clipStartTime);
-       
-       if (!this.activeMidiRecordings.has(trackId)) {
-         this.activeMidiRecordings.set(trackId, new Map());
-       }
-       this.activeMidiRecordings.get(trackId)!.set(noteName, { clipId: newClipId, noteId, start16ths: startGlobalToRecord });
+      const newClipId = state.addClip(trackId, clipStartTime);
 
-       setTimeout(() => {
-          const stateSync = useDawStore.getState();
-          stateSync.updateClip(newClipId, { notes: [newNote] });
-       }, 50);
+      if (!this.activeMidiRecordings.has(trackId)) {
+        this.activeMidiRecordings.set(trackId, new Map());
+      }
+      this.activeMidiRecordings
+        .get(trackId)!
+        .set(noteName, { clipId: newClipId, noteId, start16ths: startGlobalToRecord });
+
+      setTimeout(() => {
+        const stateSync = useDawStore.getState();
+        stateSync.updateClip(newClipId, { notes: [newNote] });
+      }, 50);
     } else {
-       const relativeStart = Math.max(0, current16ths - activeClip.startTime);
-       const startToRecord = quantize(relativeStart);
-       const startGlobalToRecord = activeClip.startTime + startToRecord;
+      const relativeStart = Math.max(0, current16ths - activeClip.startTime);
+      const startToRecord = quantize(relativeStart);
+      const startGlobalToRecord = activeClip.startTime + startToRecord;
 
-       const newNote = {
-         id: noteId,
-         note: noteName,
-         startTime: startToRecord,
-         duration: 0.1,
-         velocity,
-         isRecording: true
-       };
+      const newNote = {
+        id: noteId,
+        note: noteName,
+        startTime: startToRecord,
+        duration: 0.1,
+        velocity,
+        isRecording: true,
+      };
 
-       if (!this.activeMidiRecordings.has(trackId)) {
-         this.activeMidiRecordings.set(trackId, new Map());
-       }
-       this.activeMidiRecordings.get(trackId)!.set(noteName, { clipId: activeClip.id, noteId, start16ths: startGlobalToRecord });
-       
-       state.updateClip(activeClip.id, { notes: [...(activeClip.notes || []), newNote] });
+      if (!this.activeMidiRecordings.has(trackId)) {
+        this.activeMidiRecordings.set(trackId, new Map());
+      }
+      this.activeMidiRecordings
+        .get(trackId)!
+        .set(noteName, { clipId: activeClip.id, noteId, start16ths: startGlobalToRecord });
+
+      state.updateClip(activeClip.id, { notes: [...(activeClip.notes || []), newNote] });
     }
   }
 
@@ -1227,15 +1338,16 @@ class AudioEngine {
     const clip = state.clips[rec.clipId];
     if (!clip) return;
 
-    const currentTicks = Tone.Transport.state === 'started' ? Tone.Transport.ticks : (state.transportPosition * 48);
+    const currentTicks =
+      Tone.Transport.state === "started" ? Tone.Transport.ticks : state.transportPosition * 48;
     const current16ths = currentTicks / 48;
     const duration = Math.max(0.25, current16ths - rec.start16ths);
 
-    const updatedNotes = (clip.notes || []).map(n => {
-       if (n.id === rec.noteId) {
-          return { ...n, duration, isRecording: false };
-       }
-       return n;
+    const updatedNotes = (clip.notes || []).map((n) => {
+      if (n.id === rec.noteId) {
+        return { ...n, duration, isRecording: false };
+      }
+      return n;
     });
 
     state.updateClip(clip.id, { notes: updatedNotes });
@@ -1246,19 +1358,21 @@ class AudioEngine {
     await this.syncAudioInputsWithTracks();
 
     const state = useDawStore.getState();
-    const activeAudioTracks = state.tracks.filter(t => t.type === 'audio' && (t.armed || t.id === state.selectedTrackId));
+    const activeAudioTracks = state.tracks.filter(
+      (t) => t.type === "audio" && (t.armed || t.id === state.selectedTrackId),
+    );
 
     for (const track of activeAudioTracks) {
-        let ctx = this.trackContexts.get(track.id);
-        if (ctx && ctx.recorder) {
-            try {
-               ctx.recorder.start();
-               ctx.liveRecordingPeaks = [];
-               ctx.liveRecordingSegments = [];
-               (ctx as any).isVoiceActive = false;
-               (ctx as any).voiceStartIdx = 0;
-            } catch(e){}
-        }
+      let ctx = this.trackContexts.get(track.id);
+      if (ctx && ctx.recorder) {
+        try {
+          ctx.recorder.start();
+          ctx.liveRecordingPeaks = [];
+          ctx.liveRecordingSegments = [];
+          (ctx as any).isVoiceActive = false;
+          (ctx as any).voiceStartIdx = 0;
+        } catch (e) {}
+      }
     }
 
     this.recordingStartTimeCtx = Tone.context.currentTime;
@@ -1266,10 +1380,10 @@ class AudioEngine {
       Tone.Transport.state === "started"
         ? Tone.Transport.ticks
         : useDawStore.getState().transportPosition * 48;
-    
+
     if (this.recordingInterval) clearInterval(this.recordingInterval);
     this.recordingInterval = setInterval(() => {
-      activeAudioTracks.forEach(track => {
+      activeAudioTracks.forEach((track) => {
         let ctx = this.trackContexts.get(track.id);
         if (!ctx || !ctx.meter) return;
 
@@ -1281,7 +1395,7 @@ class AudioEngine {
         const peaks = ctx.liveRecordingPeaks || [];
         peaks.push(normalized);
         ctx.liveRecordingPeaks = peaks;
-        
+
         let isVoiceActive = (ctx as any).isVoiceActive || false;
         let voiceStartIdx = (ctx as any).voiceStartIdx || 0;
 
@@ -1294,31 +1408,40 @@ class AudioEngine {
           }
         } else {
           if (isVoiceActive) {
-             let silenceCount = 0;
-             for(let i = peaks.length - 1; i >= Math.max(0, peaks.length - 10); i--) {
-                if (peaks[i] <= 0.05) silenceCount++;
-             }
-             if (silenceCount >= 10) {
-                isVoiceActive = false;
-                (ctx as any).isVoiceActive = false;
-                const bpm = useDawStore.getState().bpm;
-                const samplesPer16th = (15 / bpm) / 0.05; 
-                
-                if (!ctx.liveRecordingSegments) ctx.liveRecordingSegments = [];
-                ctx.liveRecordingSegments.push({
-                   start16thsOffset: voiceStartIdx / samplesPer16th,
-                   duration16ths: (peaks.length - voiceStartIdx) / samplesPer16th,
-                   peaks: peaks.slice(voiceStartIdx),
-                   audioOffset16ths: voiceStartIdx / samplesPer16th
-                });
-             }
+            let silenceCount = 0;
+            for (let i = peaks.length - 1; i >= Math.max(0, peaks.length - 10); i--) {
+              if (peaks[i] <= 0.05) silenceCount++;
+            }
+            if (silenceCount >= 10) {
+              isVoiceActive = false;
+              (ctx as any).isVoiceActive = false;
+              const bpm = useDawStore.getState().bpm;
+              const samplesPer16th = 15 / bpm / 0.05;
+
+              if (!ctx.liveRecordingSegments) ctx.liveRecordingSegments = [];
+              ctx.liveRecordingSegments.push({
+                start16thsOffset: voiceStartIdx / samplesPer16th,
+                duration16ths: (peaks.length - voiceStartIdx) / samplesPer16th,
+                peaks: peaks.slice(voiceStartIdx),
+                audioOffset16ths: voiceStartIdx / samplesPer16th,
+              });
+            }
           }
         }
       });
     }, 50); // Every 50ms
   }
 
-  async stopRecording(): Promise<{ trackId: string, url: string, peaks: number[], start16ths: number, duration16ths: number, segments?: any[] }[]> {
+  async stopRecording(): Promise<
+    {
+      trackId: string;
+      url: string;
+      peaks: number[];
+      start16ths: number;
+      duration16ths: number;
+      segments?: any[];
+    }[]
+  > {
     if (this.recordingInterval) {
       clearInterval(this.recordingInterval);
       this.recordingInterval = null;
@@ -1333,42 +1456,40 @@ class AudioEngine {
     const durationSecs = recordingEndTimeCtx - this.recordingStartTimeCtx;
     const computedDuration16ths = (durationSecs / 60) * state.bpm * 4;
 
-    const start16ths = Math.max(
-      0,
-      this.recordingStartTicks / 48 - latency16ths,
-    );
-    const duration16ths = Math.max(
-      1,
-      computedDuration16ths,
-    );
+    const start16ths = Math.max(0, this.recordingStartTicks / 48 - latency16ths);
+    const duration16ths = Math.max(1, computedDuration16ths);
 
-    const armedAudioTracks = state.tracks.filter(t => t.type === 'audio' && (t.armed || t.id === state.selectedTrackId));
+    const armedAudioTracks = state.tracks.filter(
+      (t) => t.type === "audio" && (t.armed || t.id === state.selectedTrackId),
+    );
     let results: any[] = [];
 
     for (const track of armedAudioTracks) {
-        let trackCtx = this.trackContexts.get(track.id);
-        if (!trackCtx || !trackCtx.recorder || trackCtx.recorder.state !== "started") continue;
+      let trackCtx = this.trackContexts.get(track.id);
+      if (!trackCtx || !trackCtx.recorder || trackCtx.recorder.state !== "started") continue;
 
-        try {
-           const recording = await trackCtx.recorder.stop();
-           const url = URL.createObjectURL(recording);
-           const peaks = [...(trackCtx.liveRecordingPeaks || [])];
-           
-           const totalPeaks = Math.max(1, peaks.length);
-           const sixteenthsPerPeak = duration16ths / totalPeaks;
-           const oldSamplesPer16th = (15 / state.bpm) / 0.05;
+      try {
+        const recording = await trackCtx.recorder.stop();
+        const url = URL.createObjectURL(recording);
+        const peaks = [...(trackCtx.liveRecordingPeaks || [])];
 
-            const segments = [{
-               start16thsOffset: 0,
-               duration16ths: duration16ths,
-               peaks: peaks,
-               audioOffset16ths: 0
-            }];
+        const totalPeaks = Math.max(1, peaks.length);
+        const sixteenthsPerPeak = duration16ths / totalPeaks;
+        const oldSamplesPer16th = 15 / state.bpm / 0.05;
 
-            results.push({ trackId: track.id, url, peaks, start16ths, duration16ths, segments });
-        } catch(e) {
-           console.error("Failed to stop recorder on track", track.id, e);
-        }
+        const segments = [
+          {
+            start16thsOffset: 0,
+            duration16ths: duration16ths,
+            peaks: peaks,
+            audioOffset16ths: 0,
+          },
+        ];
+
+        results.push({ trackId: track.id, url, peaks, start16ths, duration16ths, segments });
+      } catch (e) {
+        console.error("Failed to stop recorder on track", track.id, e);
+      }
     }
 
     return results;
@@ -1377,15 +1498,19 @@ class AudioEngine {
   private setupStoreSubscription() {
     this.unsubscribe = useDawStore.subscribe((state, prevState) => {
       // WakeLock: acquire while playing or recording, release when idle.
-      const isActive = state.playbackState === 'playing' || state.isRecording;
-      const wasActive = prevState.playbackState === 'playing' || prevState.isRecording;
+      const isActive = state.playbackState === "playing" || state.isRecording;
+      const wasActive = prevState.playbackState === "playing" || prevState.isRecording;
       if (isActive && !wasActive) this._acquireWakeLock();
       if (!isActive && wasActive) this._releaseWakeLock();
 
       // Handle Master Volume changes
       if (state.masterVolume !== prevState.masterVolume) {
-        // rampTo avoids the click/zipper artifact on live master-fader moves
-        this.masterHeadroom.volume.rampTo(state.masterVolume - 6, 0.01);
+        // rampTo avoids the click/zipper artifact on live master-fader moves.
+        // Guard: skip if master chain isn't ready yet (no user gesture → no
+        // AudioContext → masterHeadroom is undefined).
+        if (this.masterHeadroom) {
+          this.masterHeadroom.volume.rampTo(state.masterVolume - 6, 0.01);
+        }
       }
 
       // Handle audio input change
@@ -1395,34 +1520,37 @@ class AudioEngine {
         // syncAudioInputsWithTracks() which owns the per-track capture.
         this.syncAudioInputsWithTracks();
       }
-      
+
       if (state.selectedAudioOutputId !== prevState.selectedAudioOutputId) {
         const rawCtx = Tone.getContext().rawContext as any;
         if (typeof rawCtx.setSinkId === "function") {
           rawCtx.setSinkId(state.selectedAudioOutputId || "").catch((e: Error) => {
-             console.warn("Audio output routing failed:", e);
+            console.warn("Audio output routing failed:", e);
           });
         }
       }
 
       if (state.selectedTrackId !== prevState.selectedTrackId) {
-         this.routeMicToSelectedTrack(state.inputMonitoring);
+        this.routeMicToSelectedTrack(state.inputMonitoring);
       }
 
       if (state.inputMonitoring !== prevState.inputMonitoring) {
-         this.toggleMicMonitor(state.inputMonitoring);
+        this.toggleMicMonitor(state.inputMonitoring);
       }
-      
+
       if (state.autotuneEnabled !== prevState.autotuneEnabled) {
-         if (this.vocalPipeline) {
-            this.vocalPipeline.autotuneEnabled = state.autotuneEnabled;
-         }
+        if (this.vocalPipeline) {
+          this.vocalPipeline.autotuneEnabled = state.autotuneEnabled;
+        }
       }
-      
-      if (state.projectKey !== prevState.projectKey || state.projectScale !== prevState.projectScale) {
-         if (this.vocalPipeline) {
-            this.vocalPipeline.setScale(state.projectKey, state.projectScale);
-         }
+
+      if (
+        state.projectKey !== prevState.projectKey ||
+        state.projectScale !== prevState.projectScale
+      ) {
+        if (this.vocalPipeline) {
+          this.vocalPipeline.setScale(state.projectKey, state.projectScale);
+        }
       }
 
       // If only transportPosition changed, don't resync the entire Tone.js graph
@@ -1634,15 +1762,31 @@ class AudioEngine {
     // Sustained pads/strings/brass can hold many notes simultaneously; a cap of
     // 8 voices means 8× peak summing which overloads the limiter.  Use 4–6 voices
     // for those instruments and lean on oldest-voice stealing for the rest.
-    const padTypes: SynthType[] = ['pad', 'strings', 'brass', 'rhodes', 'organ'];
+    const padTypes: SynthType[] = ["pad", "strings", "brass", "rhodes", "organ"];
     const maxPolyphony = padTypes.includes(type) ? 4 : 6;
-    return new Tone.PolySynth(
-      voice,
-      Object.assign({}, synthProps, { maxPolyphony }),
-    );
+    return new Tone.PolySynth(voice, Object.assign({}, synthProps, { maxPolyphony }));
   }
 
   private createTrackContext(track: DawTrack): TrackContext {
+    // Lazy guard: if the master chain isn't ready yet (init() hasn't run, or
+    // failed mid-way), build it now. Without this, `.connect(this.masterHeadroom)`
+    // throws "parameter 1 is not of type 'AudioNode'" because masterHeadroom is
+    // undefined. The chain runs against whatever Tone context is currently active.
+    if (!this.masterChainReady) {
+      try {
+        this.setupMasterChain();
+      } catch (_) {}
+    }
+
+    // If the master chain STILL isn't ready (Tone.start() never ran, e.g. no
+    // user gesture yet), throw a clear error so the React error boundary
+    // shows it instead of an opaque "AudioNode" failure.
+    if (!this.masterChainReady || !this.masterHeadroom) {
+      throw new Error(
+        "Audio engine master chain not initialized — click or tap anywhere in the studio first to unlock the audio context.",
+      );
+    }
+
     const channel = new Tone.Channel().connect(this.masterHeadroom);
     const eq = new Tone.EQ3();
     const compressor = new Tone.Compressor();
@@ -1660,25 +1804,34 @@ class AudioEngine {
     const highpass = new Tone.Filter({ type: "highpass", frequency: 200 });
     const lowpass = new Tone.Filter({ type: "lowpass", frequency: 2000 });
     const bandpass = new Tone.Filter({ type: "bandpass", frequency: 1000 });
-    
-    // BitCrusher instantiation matching Tone.js types
-    const bitcrusher = new Tone.BitCrusher(8);
-    bitcrusher.wet.value = 0;
-    
+
+    // BitCrusher instantiation matching Tone.js types.
+          // In Tone.js v15, BitCrusher inherits from Effect which makes `wet`
+          // a read-only property (via Object.defineProperty). The initial wet
+          // value doesn't matter because no signal flows through it until
+          // syncToneWithState wires up the user's FX settings — and that path
+          // uses `.wet.value = X` which still works because `wet` is a Signal
+          // object (you can't reassign the property, but you can mutate its
+          // internal .value). Skip the initial assignment to avoid the throw.
+          const bitcrusher = new Tone.BitCrusher(8);
+
     const pingPongDelay = new Tone.PingPongDelay({ delayTime: "4n", feedback: 0.3, wet: 0 });
     const voicePitcher = new Tone.PitchShift({ windowSize: 0.12, wet: 0 });
 
     const freqs = [31, 62, 125, 250, 500, 1000, 2000, 4000, 8000, 16000];
-    const graphicEQFilters = freqs.map(freq => new Tone.Filter({
-      type: "peaking",
-      frequency: freq,
-      Q: 1.4,
-      gain: 0
-    }));
+    const graphicEQFilters = freqs.map(
+      (freq) =>
+        new Tone.Filter({
+          type: "peaking",
+          frequency: freq,
+          Q: 1.4,
+          gain: 0,
+        }),
+    );
 
     // Series connect graphic EQ peaking filters
     for (let i = 0; i < graphicEQFilters.length - 1; i++) {
-      graphicEQFilters[i].connect(graphicEQFilters[i+1]);
+      graphicEQFilters[i].connect(graphicEQFilters[i + 1]);
     }
     // Connect the last EQ band to standard eq
     graphicEQFilters[graphicEQFilters.length - 1].connect(eq);
@@ -1743,24 +1896,15 @@ class AudioEngine {
       Tone.Transport.loopEnd = "9999m";
     }
 
-    if (
-      state.playbackState === "playing" &&
-      Tone.Transport.state !== "started"
-    ) {
+    if (state.playbackState === "playing" && Tone.Transport.state !== "started") {
       // Tighten lookahead for timeline playback — 50 ms is enough scheduling buffer
       // without the 100 ms lag that the old fixed value imposed.
       Tone.getContext().lookAhead = 0.05;
       Tone.Transport.start("+0.05");
-    } else if (
-      state.playbackState === "paused" &&
-      Tone.Transport.state === "started"
-    ) {
+    } else if (state.playbackState === "paused" && Tone.Transport.state === "started") {
       Tone.Transport.pause();
       this.trackContexts.forEach((ctx) => this.hardStopAudioPlayers(ctx));
-    } else if (
-      state.playbackState === "stopped" &&
-      Tone.Transport.state !== "stopped"
-    ) {
+    } else if (state.playbackState === "stopped" && Tone.Transport.state !== "stopped") {
       // Tighten lookahead when stopped so live pads/MIDI feel immediate.
       Tone.getContext().lookAhead = 0.01;
       Tone.Transport.stop();
@@ -1775,12 +1919,9 @@ class AudioEngine {
           const isDownbeat = positionParts[1] === "0";
           const pitch = isDownbeat ? "C6" : "C5";
           const velocity = isDownbeat ? 1 : 0.5;
-          this.metronomeSynth.triggerAttackRelease(
-            pitch,
-            "32n",
-            time,
-            velocity,
-          );
+          if (this.metronomeSynth) {
+            this.metronomeSynth.triggerAttackRelease(pitch, "32n", time, velocity);
+          }
         } catch (e) {
           console.warn("Metronome scheduling issue:", e);
         }
@@ -1875,7 +2016,7 @@ class AudioEngine {
       // Update synth portamento (glide/slide)
       if (ctx.synth) {
         try {
-          if ('set' in ctx.synth) {
+          if ("set" in ctx.synth) {
             ctx.synth.set({ portamento: track.portamento ?? 0 });
           }
           (ctx.synth as any).portamento = track.portamento ?? 0;
@@ -1906,34 +2047,33 @@ class AudioEngine {
       ctx.compressor.release.value = track.fx?.compressor?.enabled
         ? (track.fx.compressor.release ?? 0.25)
         : 0.25;
-      ctx.pitchShift.pitch = track.fx?.pitchShift?.enabled
-        ? (track.fx.pitchShift.pitch ?? 0)
-        : 0;
+      ctx.pitchShift.pitch = track.fx?.pitchShift?.enabled ? (track.fx.pitchShift.pitch ?? 0) : 0;
       ctx.pitchShift.wet.rampTo(track.fx?.pitchShift?.enabled ? 1 : 0, 0.01);
 
-      ctx.chorus.depth.value = track.fx?.chorus?.depth ?? 0.5;
+      // Chorus.depth is a plain number (not a Signal/Param) in Tone.js v15 —
+// must assign directly to .depth, not .depth.value. Same for .delayTime.
+      ctx.chorus.depth = track.fx?.chorus?.depth ?? 0.5;
       ctx.chorus.frequency.value = track.fx?.chorus?.frequency ?? 1.5;
       ctx.chorus.delayTime = track.fx?.chorus?.delayTime ?? 2.5;
-      ctx.chorus.wet.rampTo(track.fx?.chorus?.enabled
-        ? (track.fx.chorus.wet ?? 0.5)
-        : 0, 0.01);
+      ctx.chorus.wet.rampTo(track.fx?.chorus?.enabled ? (track.fx.chorus.wet ?? 0.5) : 0, 0.01);
 
       // Route through shared return buses via send-level gain nodes.
       // The per-track delay/reverb instances are kept as fallback but their wet
       // stays 0 — all signal flows through the shared buses.
       if (ctx.delaySend) {
-        ctx.delaySend.gain.rampTo(track.fx?.delay?.enabled
-          ? (track.fx.delay.mix ?? 0.2)
-          : 0, 0.01);
+        ctx.delaySend.gain.rampTo(track.fx?.delay?.enabled ? (track.fx.delay.mix ?? 0.2) : 0, 0.01);
       }
       if (track.fx?.delay) {
         this.sharedDelay.feedback.rampTo(Math.min(0.95, track.fx.delay.feedback ?? 0.3), 0.01);
-        try { this.sharedDelay.delayTime.value = track.fx.delay.time ?? '8n'; } catch (_) {}
+        try {
+          this.sharedDelay.delayTime.value = track.fx.delay.time ?? "8n";
+        } catch (_) {}
       }
       if (ctx.reverbSend) {
-        ctx.reverbSend.gain.rampTo(track.fx?.reverb?.enabled
-          ? (track.fx.reverb.mix ?? 0.3)
-          : 0, 0.01);
+        ctx.reverbSend.gain.rampTo(
+          track.fx?.reverb?.enabled ? (track.fx.reverb.mix ?? 0.3) : 0,
+          0.01,
+        );
       }
       // Sync roomSize from decay slider (0.1–10s → 0.01–0.98 normalised)
       if (track.fx?.reverb) {
@@ -1981,14 +2121,26 @@ class AudioEngine {
       // Update Distortion
       if (ctx.distortion && track.fx?.distortion) {
         ctx.distortion.distortion = track.fx.distortion.amount ?? 0.4;
-        ctx.distortion.wet.value = track.fx.distortion.enabled ? (track.fx.distortion.wet ?? 0.5) : 0;
+        ctx.distortion.wet.value = track.fx.distortion.enabled
+          ? (track.fx.distortion.wet ?? 0.5)
+          : 0;
       }
 
-      // Update Bitcrusher — bits is a plain number property in Tone.js v15
-      if (ctx.bitcrusher && track.fx?.bitcrusher) {
-        ctx.bitcrusher.wet.value = track.fx.bitcrusher.enabled ? (track.fx.bitcrusher.wet ?? 0.5) : 0;
-        ctx.bitcrusher.bits = track.fx.bitcrusher.bits ?? 8;
-      }
+      // Update Bitcrusher — bits is a plain number property in Tone.js v15.
+      // Wet assignment wrapped in try/catch because in some Tone.js v15 builds,
+      // BitCrusher.wet is a read-only number (not a Signal) and direct assignment
+      // throws "Cannot assign to read only property 'wet'". Skip silently — the
+      // default wet value doesn't matter for un-enabled effects.
+              if (ctx.bitcrusher && track.fx?.bitcrusher) {
+                try {
+                  ctx.bitcrusher.wet.value = track.fx.bitcrusher.enabled
+                    ? (track.fx.bitcrusher.wet ?? 0.5)
+                    : 0;
+                } catch (_) { /* wet is read-only or not a Signal in this build */ }
+                try {
+                  ctx.bitcrusher.bits = track.fx.bitcrusher.bits ?? 8;
+                } catch (_) {}
+              }
 
       // Update Phaser — octaves controls sweep depth (Tone.Phaser has no .Q)
       if (ctx.phaser && track.fx?.phaser) {
@@ -2007,90 +2159,103 @@ class AudioEngine {
       // Update Ping Pong Delay
       if (ctx.pingPongDelay && track.fx?.pingPongDelay) {
         ctx.pingPongDelay.feedback.value = track.fx.pingPongDelay.feedback ?? 0.3;
-        ctx.pingPongDelay.delayTime.value = track.fx.pingPongDelay.time as any ?? "4n";
-        ctx.pingPongDelay.wet.value = track.fx.pingPongDelay.enabled ? (track.fx.pingPongDelay.wet ?? 0.4) : 0;
+        ctx.pingPongDelay.delayTime.value = (track.fx.pingPongDelay.time as any) ?? "4n";
+        ctx.pingPongDelay.wet.value = track.fx.pingPongDelay.enabled
+          ? (track.fx.pingPongDelay.wet ?? 0.4)
+          : 0;
       }
 
       // Update Voice Pitcher
       if (ctx.voicePitcher && track.fx?.voicePitcher) {
         ctx.voicePitcher.pitch = track.fx.voicePitcher.shift ?? 0;
-        ctx.voicePitcher.wet.value = track.fx.voicePitcher.enabled ? (track.fx.voicePitcher.wet ?? 0.5) : 0;
+        ctx.voicePitcher.wet.value = track.fx.voicePitcher.enabled
+          ? (track.fx.voicePitcher.wet ?? 0.5)
+          : 0;
       }
 
       // Dynamic CPU-saving routing (rebuilds chain only if FX toggle state changes)
-        // NOTE: latencyDelay sits between compressor and the optional FX block —
-        // it must be inside this rebuilt chain so Phase 1 latency compensation
-        // actually applies (otherwise the rebuild disconnects it from the chain).
-        const fxChain: any[] = [ctx.eq, ctx.compressor];
-        if (ctx.latencyDelay) fxChain.push(ctx.latencyDelay);
-        if (track.fx?.gate?.enabled && ctx.gate) fxChain.push(ctx.gate);
-        if (track.fx?.highpass?.enabled && ctx.highpass) fxChain.push(ctx.highpass);
-        if (track.fx?.lowpass?.enabled && ctx.lowpass) fxChain.push(ctx.lowpass);
-        if (track.fx?.bandpass?.enabled && ctx.bandpass) fxChain.push(ctx.bandpass);
-        if (track.fx?.distortion?.enabled && ctx.distortion) fxChain.push(ctx.distortion);
-        if (track.fx?.bitcrusher?.enabled && ctx.bitcrusher) fxChain.push(ctx.bitcrusher);
-        if (track.fx?.pitchShift?.enabled) fxChain.push(ctx.pitchShift);
-        if (track.fx?.voicePitcher?.enabled && ctx.voicePitcher) fxChain.push(ctx.voicePitcher);
-        if (track.fx?.phaser?.enabled && ctx.phaser) fxChain.push(ctx.phaser);
-        if (track.fx?.tremolo?.enabled && ctx.tremolo) fxChain.push(ctx.tremolo);
-        if (track.fx?.chorus?.enabled) fxChain.push(ctx.chorus);
-        if (track.fx?.delay?.enabled) fxChain.push(ctx.delay);
-        if (track.fx?.pingPongDelay?.enabled && ctx.pingPongDelay) fxChain.push(ctx.pingPongDelay);
-        if (track.fx?.reverb?.enabled) fxChain.push(ctx.reverb);
-        fxChain.push(ctx.channel);
+      // NOTE: latencyDelay sits between compressor and the optional FX block —
+      // it must be inside this rebuilt chain so Phase 1 latency compensation
+      // actually applies (otherwise the rebuild disconnects it from the chain).
+      const fxChain: any[] = [ctx.eq, ctx.compressor];
+      if (ctx.latencyDelay) fxChain.push(ctx.latencyDelay);
+      if (track.fx?.gate?.enabled && ctx.gate) fxChain.push(ctx.gate);
+      if (track.fx?.highpass?.enabled && ctx.highpass) fxChain.push(ctx.highpass);
+      if (track.fx?.lowpass?.enabled && ctx.lowpass) fxChain.push(ctx.lowpass);
+      if (track.fx?.bandpass?.enabled && ctx.bandpass) fxChain.push(ctx.bandpass);
+      if (track.fx?.distortion?.enabled && ctx.distortion) fxChain.push(ctx.distortion);
+      if (track.fx?.bitcrusher?.enabled && ctx.bitcrusher) fxChain.push(ctx.bitcrusher);
+      if (track.fx?.pitchShift?.enabled) fxChain.push(ctx.pitchShift);
+      if (track.fx?.voicePitcher?.enabled && ctx.voicePitcher) fxChain.push(ctx.voicePitcher);
+      if (track.fx?.phaser?.enabled && ctx.phaser) fxChain.push(ctx.phaser);
+      if (track.fx?.tremolo?.enabled && ctx.tremolo) fxChain.push(ctx.tremolo);
+      if (track.fx?.chorus?.enabled) fxChain.push(ctx.chorus);
+      if (track.fx?.delay?.enabled) fxChain.push(ctx.delay);
+      if (track.fx?.pingPongDelay?.enabled && ctx.pingPongDelay) fxChain.push(ctx.pingPongDelay);
+      if (track.fx?.reverb?.enabled) fxChain.push(ctx.reverb);
+      fxChain.push(ctx.channel);
 
-        const chainStr = fxChain.map((n: any) => n.name).join("->");
-        if (ctx.currentChainStr !== chainStr) {
-          ctx.currentChainStr = chainStr;
-          ctx.eq.disconnect();
-          ctx.compressor.disconnect();
-          if (ctx.latencyDelay) ctx.latencyDelay.disconnect();
-          ctx.pitchShift.disconnect();
-          ctx.chorus.disconnect();
-          ctx.delay.disconnect();
-          ctx.reverb.disconnect();
-          if (ctx.distortion) ctx.distortion.disconnect();
-          if (ctx.phaser) ctx.phaser.disconnect();
-          if (ctx.tremolo) ctx.tremolo.disconnect();
-          if (ctx.gate) ctx.gate.disconnect();
-          if (ctx.highpass) ctx.highpass.disconnect();
-          if (ctx.lowpass) ctx.lowpass.disconnect();
-          if (ctx.bandpass) ctx.bandpass.disconnect();
-          if (ctx.bitcrusher) ctx.bitcrusher.disconnect();
-          if (ctx.pingPongDelay) ctx.pingPongDelay.disconnect();
-          if (ctx.voicePitcher) ctx.voicePitcher.disconnect();
+      const chainStr = fxChain.map((n: any) => n.name).join("->");
+      if (ctx.currentChainStr !== chainStr) {
+        ctx.currentChainStr = chainStr;
+        ctx.eq.disconnect();
+        ctx.compressor.disconnect();
+        if (ctx.latencyDelay) ctx.latencyDelay.disconnect();
+        ctx.pitchShift.disconnect();
+        ctx.chorus.disconnect();
+        ctx.delay.disconnect();
+        ctx.reverb.disconnect();
+        if (ctx.distortion) ctx.distortion.disconnect();
+        if (ctx.phaser) ctx.phaser.disconnect();
+        if (ctx.tremolo) ctx.tremolo.disconnect();
+        if (ctx.gate) ctx.gate.disconnect();
+        if (ctx.highpass) ctx.highpass.disconnect();
+        if (ctx.lowpass) ctx.lowpass.disconnect();
+        if (ctx.bandpass) ctx.bandpass.disconnect();
+        if (ctx.bitcrusher) ctx.bitcrusher.disconnect();
+        if (ctx.pingPongDelay) ctx.pingPongDelay.disconnect();
+        if (ctx.voicePitcher) ctx.voicePitcher.disconnect();
 
-          for (let i = 0; i < fxChain.length - 1; i++) {
-            fxChain[i].connect(fxChain[i + 1]);
-          }
-
-          // Reconnect the graphicEQ chain → eq so the synth signal isn't
-          // stranded at graphicEQ[9] after eq.disconnect(). createTrackContext
-          // wires graphicEQ[0..9] in series and graphicEQ[9] → eq, but Tone's
-          // disconnect() severs the downstream side and the rebuild above
-          // never re-establishes it. Without this, every clip (MIDI and audio)
-          // would route through graphicEQ into a dead end → silent playback.
-          if (ctx.graphicEQFilters && ctx.graphicEQFilters.length > 0) {
-            const last = ctx.graphicEQFilters[ctx.graphicEQFilters.length - 1];
-            try { last.disconnect(); } catch (e) {}
-            try { last.connect(ctx.eq); } catch (e) {}
-          }
+        for (let i = 0; i < fxChain.length - 1; i++) {
+          fxChain[i].connect(fxChain[i + 1]);
         }
+
+        // Reconnect the graphicEQ chain → eq so the synth signal isn't
+        // stranded at graphicEQ[9] after eq.disconnect(). createTrackContext
+        // wires graphicEQ[0..9] in series and graphicEQ[9] → eq, but Tone's
+        // disconnect() severs the downstream side and the rebuild above
+        // never re-establishes it. Without this, every clip (MIDI and audio)
+        // would route through graphicEQ into a dead end → silent playback.
+        if (ctx.graphicEQFilters && ctx.graphicEQFilters.length > 0) {
+          const last = ctx.graphicEQFilters[ctx.graphicEQFilters.length - 1];
+          try {
+            last.disconnect();
+          } catch (e) {}
+          try {
+            last.connect(ctx.eq);
+          } catch (e) {}
+        }
+      }
 
       // Routing for Track Grouping (only disconnect/connect when group changes to avoid dropouts)
       const prevGroupId = prevState?.tracks.find((t) => t.id === track.id)?.groupId;
       if (prevGroupId !== track.groupId || !ctx.currentChainStr) {
         ctx.channel.disconnect();
-        const parentGroup = track.groupId && track.groupId !== track.id 
-          ? state.tracks.find(t => t.id === track.groupId) 
-          : null;
-        const groupCtx = parentGroup && parentGroup.type === 'group' 
-          ? this.trackContexts.get(parentGroup.id) 
-          : null;
+        const parentGroup =
+          track.groupId && track.groupId !== track.id
+            ? state.tracks.find((t) => t.id === track.groupId)
+            : null;
+        const groupCtx =
+          parentGroup && parentGroup.type === "group"
+            ? this.trackContexts.get(parentGroup.id)
+            : null;
 
         if (groupCtx) {
           ctx.channel.connect(groupCtx.eq);
-        } else {
+        } else if (this.masterHeadroom) {
+          // Guard: if the master chain never came up (no user gesture, init
+          // failed), skip the connect so we don't throw and crash the React
+          // tree. The track will just be silent until init() runs.
           ctx.channel.connect(this.masterHeadroom);
         }
       }
@@ -2132,90 +2297,114 @@ class AudioEngine {
       const track = state.tracks.find((t) => t.id === clip.trackId);
       const ctx = this.trackContexts.get(clip.trackId);
       if (!track || !ctx) return;
-      
+
       const prevClip = prevState?.clips[clip.id];
-      if (track.type === 'audio' && clip !== prevClip) {
-         if (!prevClip || prevClip.startTime !== clip.startTime || prevClip.duration !== clip.duration || prevClip.audioOffset !== clip.audioOffset) {
-            audioClipsChangedBounds = true;
-         }
+      if (track.type === "audio" && clip !== prevClip) {
+        if (
+          !prevClip ||
+          prevClip.startTime !== clip.startTime ||
+          prevClip.duration !== clip.duration ||
+          prevClip.audioOffset !== clip.audioOffset
+        ) {
+          audioClipsChangedBounds = true;
+        }
       }
 
       const muteVelocity = clip.muted ? 0 : 1;
       const speed = clip.speed || 1;
 
       if (track.type === "midi" && ctx.synth) {
-        const baseNotes = (clip.notes || []).filter(note => !note.isRecording);
-        
+        const baseNotes = (clip.notes || []).filter((note) => !note.isRecording);
+
         // Skip rebuilding MIDI Part if notes, position, speed, loop settings, mute status, and BPM did not change.
         // Use notesRevision (an integer counter) instead of JSON.stringify for O(1) comparison.
         let part = this.parts.get(clip.id);
-        const notesSame = prevClip &&
-                          clip.notesRevision !== undefined
-                            ? clip.notesRevision === prevClip.notesRevision
-                            : (() => {
-                                const prevNotes = (prevClip.notes || []).filter(note => !note.isRecording);
-                                return baseNotes.length === prevNotes.length &&
-                                       JSON.stringify(baseNotes) === JSON.stringify(prevNotes);
-                              })();
-        const paramsSame = prevClip &&
-                           prevClip.startTime === clip.startTime &&
-                           prevClip.duration === clip.duration &&
-                           prevClip.audioOffset === clip.audioOffset &&
-                           prevClip.loopLength === clip.loopLength &&
-                           prevClip.muted === clip.muted &&
-                           prevClip.gain === clip.gain &&
-                           prevClip.speed === clip.speed &&
-                           prevClip.isGhost === clip.isGhost &&
-                           prevState?.swingAmount === state.swingAmount;
+        const notesSame =
+          prevClip && clip.notesRevision !== undefined
+            ? clip.notesRevision === prevClip.notesRevision
+            : (() => {
+                const prevNotes = (prevClip.notes || []).filter((note) => !note.isRecording);
+                return (
+                  baseNotes.length === prevNotes.length &&
+                  JSON.stringify(baseNotes) === JSON.stringify(prevNotes)
+                );
+              })();
+        const paramsSame =
+          prevClip &&
+          prevClip.startTime === clip.startTime &&
+          prevClip.duration === clip.duration &&
+          prevClip.audioOffset === clip.audioOffset &&
+          prevClip.loopLength === clip.loopLength &&
+          prevClip.muted === clip.muted &&
+          prevClip.gain === clip.gain &&
+          prevClip.speed === clip.speed &&
+          prevClip.isGhost === clip.isGhost &&
+          prevState?.swingAmount === state.swingAmount;
 
         if (part && notesSame && paramsSame && !bpmChanged) {
           return; // Skip and keep existing part playing flawlessly!
         }
 
         let maxNoteEnd = 0;
-        baseNotes.forEach(n => {
-            if (n.startTime + n.duration > maxNoteEnd) maxNoteEnd = n.startTime + n.duration;
+        baseNotes.forEach((n) => {
+          if (n.startTime + n.duration > maxNoteEnd) maxNoteEnd = n.startTime + n.duration;
         });
         const calculatedPatternLength = Math.max(1, Math.ceil(maxNoteEnd / 4) * 4); // round up to nearest beat
         const loopLength = clip.loopLength || calculatedPatternLength;
 
         const totalDuration = clip.duration;
         const clipOffset = clip.audioOffset || 0;
-        
-        type MidiEvent = { time: string | number, note: string, duration: string | number, velocity: number, isSlide?: boolean };
+
+        type MidiEvent = {
+          time: string | number;
+          note: string;
+          duration: string | number;
+          velocity: number;
+          isSlide?: boolean;
+        };
         const events: MidiEvent[] = [];
-        
+
         baseNotes.forEach((note) => {
           for (let offset = 0; offset < totalDuration + clipOffset; offset += loopLength) {
             const rawStart = note.startTime + offset - clipOffset;
             const end = rawStart + note.duration;
-            
+
             if (rawStart >= totalDuration) break;
             if (end <= 0) continue;
-            
+
             const clippedStart = Math.max(0, rawStart);
             const trimLeft = clippedStart - rawStart;
-            
+
             const remaining = totalDuration - clippedStart;
             const clippedDuration = Math.min(note.duration - trimLeft, remaining);
-            
+
             if (clippedDuration <= 0) continue;
-            
+
             let swingDelay16th = 0;
             if (state.swingAmount > 0 && Math.round(rawStart) % 2 === 1) {
               // Apply up to 50% of a sixteenth note delay for extreme swing feel
               swingDelay16th = (state.swingAmount / 100) * 0.5;
             }
 
-            const final16thPosition = (clip.startTime + (clippedStart / speed)) + (swingDelay16th / speed);
+            const final16thPosition =
+              clip.startTime + clippedStart / speed + swingDelay16th / speed;
             const duration16ths = clippedDuration / speed;
 
             events.push({
               time: format16thsToTimeStr(final16thPosition),
               note: note.note,
               duration: format16thsToTimeStr(duration16ths),
-              velocity: Math.min(1, Math.max(0, (note.velocity ?? 0.8) * muteVelocity * (1 + (clip.gain || 0) / 20) * ((note.isGhost || clip.isGhost) ? 0.35 : 1.0))),
-              isSlide: !!note.isSlide
+              velocity: Math.min(
+                1,
+                Math.max(
+                  0,
+                  (note.velocity ?? 0.8) *
+                    muteVelocity *
+                    (1 + (clip.gain || 0) / 20) *
+                    (note.isGhost || clip.isGhost ? 0.35 : 1.0),
+                ),
+              ),
+              isSlide: !!note.isSlide,
             });
           }
         });
@@ -2227,35 +2416,42 @@ class AudioEngine {
                 if (ctx.synth && !ctx.synth.disposed) {
                   if (value.isSlide) {
                     // FL studio glide: dynamically enable portamento, trigger note, and schedule restoring original state
-                    const originalPortamento = (ctx.synth as any).portamento ?? track.portamento ?? 0;
-                    const slideDurationSeconds = Math.max(0.08, Math.min(0.35, Tone.Time(value.duration).toSeconds()));
-                    
-                    if ('set' in ctx.synth) {
+                    const originalPortamento =
+                      (ctx.synth as any).portamento ?? track.portamento ?? 0;
+                    const slideDurationSeconds = Math.max(
+                      0.08,
+                      Math.min(0.35, Tone.Time(value.duration).toSeconds()),
+                    );
+
+                    if ("set" in ctx.synth) {
                       ctx.synth.set({ portamento: slideDurationSeconds });
                     } else {
                       (ctx.synth as any).portamento = slideDurationSeconds;
                     }
-                    
+
                     ctx.synth.triggerAttackRelease(
                       value.note,
                       value.duration,
                       time,
                       value.velocity,
                     );
-                    
+
                     // Restore original portamento glide after a short delay
                     Tone.Draw.schedule(() => {
-                      setTimeout(() => {
-                        try {
-                          if (ctx.synth && !ctx.synth.disposed) {
-                            if ('set' in ctx.synth!) {
-                              ctx.synth!.set({ portamento: originalPortamento });
-                            } else {
-                              (ctx.synth as any).portamento = originalPortamento;
+                      setTimeout(
+                        () => {
+                          try {
+                            if (ctx.synth && !ctx.synth.disposed) {
+                              if ("set" in ctx.synth!) {
+                                ctx.synth!.set({ portamento: originalPortamento });
+                              } else {
+                                (ctx.synth as any).portamento = originalPortamento;
+                              }
                             }
-                          }
-                        } catch (_) {}
-                      }, Math.round(slideDurationSeconds * 1000) + 10);
+                          } catch (_) {}
+                        },
+                        Math.round(slideDurationSeconds * 1000) + 10,
+                      );
                     }, time);
                   } else {
                     ctx.synth.triggerAttackRelease(
@@ -2286,26 +2482,27 @@ class AudioEngine {
       } else if (track.type === "audio" && clip.audioUrl) {
         let player = ctx.players.get(clip.id);
 
-        const paramsSame = prevClip &&
-                           prevClip.audioUrl === clip.audioUrl &&
-                           prevClip.startTime === clip.startTime &&
-                           prevClip.duration === clip.duration &&
-                           prevClip.audioOffset === clip.audioOffset &&
-                           prevClip.speed === clip.speed &&
-                           prevClip.loopLength === clip.loopLength &&
-                           prevClip.muted === clip.muted &&
-                           prevClip.fadeIn === clip.fadeIn &&
-                           prevClip.fadeOut === clip.fadeOut &&
-                           prevClip.gain === clip.gain &&
-                           JSON.stringify(prevClip.vocalNotes) === JSON.stringify(clip.vocalNotes);
+        const paramsSame =
+          prevClip &&
+          prevClip.audioUrl === clip.audioUrl &&
+          prevClip.startTime === clip.startTime &&
+          prevClip.duration === clip.duration &&
+          prevClip.audioOffset === clip.audioOffset &&
+          prevClip.speed === clip.speed &&
+          prevClip.loopLength === clip.loopLength &&
+          prevClip.muted === clip.muted &&
+          prevClip.fadeIn === clip.fadeIn &&
+          prevClip.fadeOut === clip.fadeOut &&
+          prevClip.gain === clip.gain &&
+          JSON.stringify(prevClip.vocalNotes) === JSON.stringify(clip.vocalNotes);
 
         const skipPlayerRebuild = player && paramsSame && !bpmChanged;
 
         const schedulePlayer = (p: Tone.Player) => {
           p.unsync();
           let originalBpm = clip.originalBpm || state.bpm;
-          let offsetTime = (clip.audioOffset || 0) * (60 / originalBpm) / 4;
-          
+          let offsetTime = ((clip.audioOffset || 0) * (60 / originalBpm)) / 4;
+
           let rate = clip.speed || 1;
           if (clip.originalBpm) {
             rate = rate * (state.bpm / clip.originalBpm);
@@ -2313,14 +2510,14 @@ class AudioEngine {
 
           const actualDuration16ths = clip.duration / rate;
           let durationTime = actualDuration16ths * Tone.Time("16n").toSeconds();
-          
+
           const loopLength16ths = (clip.loopLength || clip.duration) / rate;
           let loopEndTime = loopLength16ths * Tone.Time("16n").toSeconds();
 
           if (p.buffer && p.buffer.loaded && p.buffer.duration > 0) {
             if (offsetTime >= p.buffer.duration) offsetTime = Math.max(0, p.buffer.duration - 0.01);
             if (loopEndTime > p.buffer.duration) loopEndTime = p.buffer.duration;
-            
+
             p.loop = loopLength16ths < actualDuration16ths;
             if (!p.loop) {
               const maxDuration = Math.max(0, p.buffer.duration - offsetTime - 0.01);
@@ -2343,11 +2540,16 @@ class AudioEngine {
 
         let targetUrl = clip.audioUrl;
         const brokenUrls: Record<string, string> = {
-          'https://tonejs.github.io/audio/loop/FW3_snare.mp3': 'https://tonejs.github.io/audio/drum-samples/breakbeat.mp3',
-          'https://tonejs.github.io/audio/loop/chords.mp3': 'https://tonejs.github.io/audio/casio/A1.mp3',
-          'https://tonejs.github.io/audio/loop/bass.mp3': 'https://tonejs.github.io/audio/casio/C2.mp3',
-          'https://tonejs.github.io/audio/drum-samples/CR78/beat.mp3': 'https://tonejs.github.io/audio/drum-samples/breakbeat.mp3',
-          'https://tonejs.github.io/audio/loop/female_ah.mp3': 'https://tonejs.github.io/audio/casio/A2.mp3'
+          "https://tonejs.github.io/audio/loop/FW3_snare.mp3":
+            "https://tonejs.github.io/audio/drum-samples/breakbeat.mp3",
+          "https://tonejs.github.io/audio/loop/chords.mp3":
+            "https://tonejs.github.io/audio/casio/A1.mp3",
+          "https://tonejs.github.io/audio/loop/bass.mp3":
+            "https://tonejs.github.io/audio/casio/C2.mp3",
+          "https://tonejs.github.io/audio/drum-samples/CR78/beat.mp3":
+            "https://tonejs.github.io/audio/drum-samples/breakbeat.mp3",
+          "https://tonejs.github.io/audio/loop/female_ah.mp3":
+            "https://tonejs.github.io/audio/casio/A2.mp3",
         };
         if (brokenUrls[targetUrl]) {
           targetUrl = brokenUrls[targetUrl];
@@ -2362,20 +2564,20 @@ class AudioEngine {
             loop: false,
             onload: () => {
               if (player) {
-                 if (!cachedBuffer && player.buffer) {
-                    this.audioBufferCache.set(targetUrl, player.buffer);
-                 }
-                 schedulePlayer(player);
+                if (!cachedBuffer && player.buffer) {
+                  this.audioBufferCache.set(targetUrl, player.buffer);
+                }
+                schedulePlayer(player);
               }
             },
           });
-          
-          // If using cached buffer, it is already loaded, but onload won't fire until we execute it or naturally 
+
+          // If using cached buffer, it is already loaded, but onload won't fire until we execute it or naturally
           // Tone handles it, but just in case we can schedule immediately if it's already a buffer
           if (cachedBuffer) {
-              schedulePlayer(player);
+            schedulePlayer(player);
           }
-          
+
           const isPcEnabled = track?.fx?.pitchCorrection?.enabled ?? false;
           if (clip.vocalNotes && clip.vocalNotes.length > 0 && isPcEnabled) {
             const pitchShift = new Tone.PitchShift({ windowSize: 0.15 }).connect(ctx.eq);
@@ -2384,7 +2586,7 @@ class AudioEngine {
           } else {
             player.connect(ctx.eq);
           }
-          
+
           ctx.players.set(clip.id, player);
           player.fadeIn = clip.fadeIn || 0;
           player.fadeOut = clip.fadeOut || 0;
@@ -2393,17 +2595,17 @@ class AudioEngine {
           const isPcEnabled = track?.fx?.pitchCorrection?.enabled ?? false;
           const hasVocalNotes = clip.vocalNotes && clip.vocalNotes.length > 0 && isPcEnabled;
           let pitchShift = this.clipPitchShifts.get(clip.id);
-          
+
           if (hasVocalNotes && !pitchShift) {
-             player.disconnect();
-             pitchShift = new Tone.PitchShift({ windowSize: 0.15 }).connect(ctx.eq);
-             player.connect(pitchShift);
-             this.clipPitchShifts.set(clip.id, pitchShift);
+            player.disconnect();
+            pitchShift = new Tone.PitchShift({ windowSize: 0.15 }).connect(ctx.eq);
+            player.connect(pitchShift);
+            this.clipPitchShifts.set(clip.id, pitchShift);
           } else if (!hasVocalNotes && pitchShift) {
-             player.disconnect();
-             pitchShift.dispose();
-             this.clipPitchShifts.delete(clip.id);
-             player.connect(ctx.eq);
+            player.disconnect();
+            pitchShift.dispose();
+            this.clipPitchShifts.delete(clip.id);
+            player.connect(ctx.eq);
           }
 
           if (player.loaded) {
@@ -2428,84 +2630,89 @@ class AudioEngine {
           if (pitchShift) {
             const pcAmount = pcSettings?.amount ?? 100; // 0 to 100
             const pcSpeed = pcSettings?.speed ?? 100; // 0 to 100
-            const pcScale = pcSettings?.scale || 'Chromatic';
-            
-            const projectKey = state.projectKey || 'C';
-            const scaleOffsets: Record<string, number[]> = {
-              'Chromatic': [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11],
-              'Major': [0, 2, 4, 5, 7, 9, 11],
-              'Minor': [0, 2, 3, 5, 7, 8, 10],
-              'Pentatonic': [0, 2, 4, 7, 9]
-            };
-            const activeScale = scaleOffsets[pcScale] || scaleOffsets['Chromatic'];
-            const noteNames = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"];
-            const rootIdx = noteNames.indexOf(projectKey.replace(/m$/, ''));
-            const allowedNotes = activeScale.map(o => (rootIdx + o) % 12);
+            const pcScale = pcSettings?.scale || "Chromatic";
 
-            const events = clip.vocalNotes.flatMap(vn => {
-              let targetMidi = vn.midi; 
-              
+            const projectKey = state.projectKey || "C";
+            const scaleOffsets: Record<string, number[]> = {
+              Chromatic: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11],
+              Major: [0, 2, 4, 5, 7, 9, 11],
+              Minor: [0, 2, 3, 5, 7, 8, 10],
+              Pentatonic: [0, 2, 4, 7, 9],
+            };
+            const activeScale = scaleOffsets[pcScale] || scaleOffsets["Chromatic"];
+            const noteNames = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"];
+            const rootIdx = noteNames.indexOf(projectKey.replace(/m$/, ""));
+            const allowedNotes = activeScale.map((o) => (rootIdx + o) % 12);
+
+            const events = clip.vocalNotes.flatMap((vn) => {
+              let targetMidi = vn.midi;
+
               if (isPcEnabled) {
-                 const origNote = Math.round(vn.originalMidi);
-                 let nearest = origNote;
-                 let minDist = 999;
-                 for (let i = origNote - 12; i <= origNote + 12; i++) {
-                   if (allowedNotes.includes(((i % 12) + 12) % 12)) {
-                      const dist = Math.abs(i - vn.originalMidi);
-                      if (dist < minDist) {
-                         minDist = dist;
-                         nearest = i;
-                      }
-                   }
-                 }
-                 const shiftAmount = nearest - vn.originalMidi;
-                 targetMidi = vn.originalMidi + (shiftAmount * (pcAmount / 100));
-              }
-              
-              if (isPcEnabled && vn.pitchCurve && vn.pitchCurve.length > 0) {
-                 // Dynamic Autotune (T-Pain effect) Using Pitch Curve
-                 const noteDurSeconds = (vn.duration / speed) * Tone.Time("16n").toSeconds();
-                 const timePerPoint = noteDurSeconds / vn.pitchCurve.length;
-                 const noteStartSeconds = (clip.startTime + vn.startTime / speed) * Tone.Time("16n").toSeconds();
-                 
-                 // Smoothing factor based on pcSpeed (0 = slow, 100 = instant)
-                 const alpha = pcSpeed === 100 ? 1.0 : (pcSpeed / 100) * 0.3;
-                 let currentShift = 0;
-                 
-                 return vn.pitchCurve.map((curveMidi, idx) => {
-                    if (curveMidi <= 0) {
-                       return {
-                          time: noteStartSeconds + (idx * timePerPoint),
-                          pitch: currentShift // maintain previous shift during unvoiced/silence
-                       };
+                const origNote = Math.round(vn.originalMidi);
+                let nearest = origNote;
+                let minDist = 999;
+                for (let i = origNote - 12; i <= origNote + 12; i++) {
+                  if (allowedNotes.includes(((i % 12) + 12) % 12)) {
+                    const dist = Math.abs(i - vn.originalMidi);
+                    if (dist < minDist) {
+                      minDist = dist;
+                      nearest = i;
                     }
-                    
-                    // target shift is the difference between where we want to be and where the vocal actually was
-                    const rawShift = targetMidi - curveMidi;
-                    // Apply Amount (0 to 100)
-                    const wantedShift = rawShift * (pcAmount / 100);
-                    // Apply Retune Speed (smoothing)
-                    currentShift = currentShift + alpha * (wantedShift - currentShift);
-                    
+                  }
+                }
+                const shiftAmount = nearest - vn.originalMidi;
+                targetMidi = vn.originalMidi + shiftAmount * (pcAmount / 100);
+              }
+
+              if (isPcEnabled && vn.pitchCurve && vn.pitchCurve.length > 0) {
+                // Dynamic Autotune (T-Pain effect) Using Pitch Curve
+                const noteDurSeconds = (vn.duration / speed) * Tone.Time("16n").toSeconds();
+                const timePerPoint = noteDurSeconds / vn.pitchCurve.length;
+                const noteStartSeconds =
+                  (clip.startTime + vn.startTime / speed) * Tone.Time("16n").toSeconds();
+
+                // Smoothing factor based on pcSpeed (0 = slow, 100 = instant)
+                const alpha = pcSpeed === 100 ? 1.0 : (pcSpeed / 100) * 0.3;
+                let currentShift = 0;
+
+                return vn.pitchCurve.map((curveMidi, idx) => {
+                  if (curveMidi <= 0) {
                     return {
-                       time: noteStartSeconds + (idx * timePerPoint),
-                       pitch: currentShift
+                      time: noteStartSeconds + idx * timePerPoint,
+                      pitch: currentShift, // maintain previous shift during unvoiced/silence
                     };
-                 });
+                  }
+
+                  // target shift is the difference between where we want to be and where the vocal actually was
+                  const rawShift = targetMidi - curveMidi;
+                  // Apply Amount (0 to 100)
+                  const wantedShift = rawShift * (pcAmount / 100);
+                  // Apply Retune Speed (smoothing)
+                  currentShift = currentShift + alpha * (wantedShift - currentShift);
+
+                  return {
+                    time: noteStartSeconds + idx * timePerPoint,
+                    pitch: currentShift,
+                  };
+                });
               } else {
-                 return [{
-                   time: (clip.startTime + vn.startTime / speed) * Tone.Time("16n").toSeconds(),
-                   pitch: targetMidi - vn.originalMidi
-                 }];
+                return [
+                  {
+                    time: (clip.startTime + vn.startTime / speed) * Tone.Time("16n").toSeconds(),
+                    pitch: targetMidi - vn.originalMidi,
+                  },
+                ];
               }
             });
-            
+
             // Return to 0 when no note is present (optional, but good for natural pieces between notes)
-            clip.vocalNotes.forEach(vn => {
-               events.push({
-                 time: (clip.startTime + (vn.startTime + vn.duration) / speed) * Tone.Time("16n").toSeconds(),
-                 pitch: 0
-               });
+            clip.vocalNotes.forEach((vn) => {
+              events.push({
+                time:
+                  (clip.startTime + (vn.startTime + vn.duration) / speed) *
+                  Tone.Time("16n").toSeconds(),
+                pitch: 0,
+              });
             });
 
             // Sort events by time
@@ -2522,15 +2729,15 @@ class AudioEngine {
               part.start(0);
             } else {
               part.clear();
-              events.forEach(e => (part as Tone.Part).add(e.time, e));
+              events.forEach((e) => (part as Tone.Part).add(e.time, e));
             }
           }
         } else {
-           const part = this.parts.get(clip.id + "_pitch");
-           if (part) {
-             part.dispose();
-             this.parts.delete(clip.id + "_pitch");
-           }
+          const part = this.parts.get(clip.id + "_pitch");
+          if (part) {
+            part.dispose();
+            this.parts.delete(clip.id + "_pitch");
+          }
         }
 
         player.playbackRate = speed;
@@ -2541,12 +2748,12 @@ class AudioEngine {
         // Doing this via Tone properties or track eq could be complex, we'll leave it as proxy for now
       }
     });
-    
+
     if (audioClipsChangedBounds && Tone.Transport.state === "started") {
-       // Force Tone.js to re-evaluate the synced timeline so moved audio clips 
-       // immediately resume playback from their correct shifted position, 
-       // ensuring movable/shiftable clips track during live playback.
-       Tone.Transport.seconds = Tone.Transport.seconds;
+      // Force Tone.js to re-evaluate the synced timeline so moved audio clips
+      // immediately resume playback from their correct shifted position,
+      // ensuring movable/shiftable clips track during live playback.
+      Tone.Transport.seconds = Tone.Transport.seconds;
     }
   }
 
@@ -2592,7 +2799,7 @@ class AudioEngine {
     if (!ctx || !ctx.players) return;
     ctx.players.forEach((p: any) => {
       try {
-        if (p && !p.disposed && p.state === 'started') {
+        if (p && !p.disposed && p.state === "started") {
           p.stop();
         }
       } catch (e) {}
@@ -2609,8 +2816,8 @@ class AudioEngine {
    */
   public async refreshAudioPlayersAfterResume() {
     try {
-      const raw = (Tone.context.rawContext as AudioContext);
-      if (raw.state === 'suspended') {
+      const raw = Tone.context.rawContext as AudioContext;
+      if (raw.state === "suspended") {
         await raw.resume().catch(() => {});
       }
       this.trackContexts.forEach((ctx) => {
@@ -2629,46 +2836,55 @@ class AudioEngine {
       // After a mobile WebView resume the Transport may internally be stalled even
       // though Tone.Transport.state still reads "started".  Force an explicit
       // restart so audio clips don't stay silent.
-      if (state.playbackState === 'playing') {
+      if (state.playbackState === "playing") {
         try {
           Tone.Transport.stop();
-          Tone.Transport.start('+0.05');
+          Tone.Transport.start("+0.05");
         } catch (_) {}
       }
       // Pass null as prevState to bypass the track-diff guard so every clip
       // player gets fully rebuilt after the resume.
       this.syncToneWithState(state, null);
     } catch (e) {
-      console.warn('[engine] refreshAudioPlayersAfterResume failed:', e);
+      console.warn("[engine] refreshAudioPlayersAfterResume failed:", e);
     }
   }
 
-
-  async getAudioBuffer(trackId: string, clipId: string, clipUrl?: string): Promise<AudioBuffer | null> {
+  async getAudioBuffer(
+    trackId: string,
+    clipId: string,
+    clipUrl?: string,
+  ): Promise<AudioBuffer | null> {
     const ctx = this.trackContexts.get(trackId);
     if (!ctx) return null;
     const player = ctx.players.get(clipId);
     if (!player || !player.buffer) return null;
     if (!player.loaded) {
-       try {
-         await player.buffer.load((player as any)._url || clipUrl || "");
-       } catch (err) {
-         console.warn(`[getAudioBuffer] Failed to load audio buffer for track/clip:`, err);
-         return null;
-       }
+      try {
+        await player.buffer.load((player as any)._url || clipUrl || "");
+      } catch (err) {
+        console.warn(`[getAudioBuffer] Failed to load audio buffer for track/clip:`, err);
+        return null;
+      }
     }
     return player.buffer.get() as AudioBuffer;
   }
 
   async preloadAudioUrls(urls: string[]): Promise<void> {
-    const uniqueUrls = Array.from(new Set(urls.filter((url): url is string => typeof url === 'string' && url.trim().length > 0)));
+    const uniqueUrls = Array.from(
+      new Set(
+        urls.filter((url): url is string => typeof url === "string" && url.trim().length > 0),
+      ),
+    );
     const promises = uniqueUrls.map(async (url) => {
       if (this.audioBufferCache.has(url)) return;
       try {
         const buffer = new Tone.ToneAudioBuffer();
         await buffer.load(url);
         this.audioBufferCache.set(url, buffer);
-        console.log(`[AudioEngine] Optimized and preloaded ToneAudioBuffer for seamless segment playback: ${url}`);
+        console.log(
+          `[AudioEngine] Optimized and preloaded ToneAudioBuffer for seamless segment playback: ${url}`,
+        );
       } catch (err) {
         console.warn(`[AudioEngine] Optional pre-loading failed for segment URL: ${url}`, err);
       }
@@ -2676,7 +2892,12 @@ class AudioEngine {
     await Promise.all(promises);
   }
 
-  async warpClipAudio(trackId: string, clipId: string, currentBpm: number, originalBpm: number): Promise<boolean> {
+  async warpClipAudio(
+    trackId: string,
+    clipId: string,
+    currentBpm: number,
+    originalBpm: number,
+  ): Promise<boolean> {
     try {
       const originalBuffer = await this.getAudioBuffer(trackId, clipId);
       if (!originalBuffer) return false;
@@ -2695,7 +2916,7 @@ class AudioEngine {
         if (player) {
           const newToneBuffer = new Tone.ToneAudioBuffer(stretched);
           player.buffer = newToneBuffer;
-          
+
           const clip = useDawStore.getState().clips[clipId];
           if (clip && clip.audioUrl) {
             this.audioBufferCache.set(clip.audioUrl, newToneBuffer);
@@ -2722,7 +2943,12 @@ class AudioEngine {
     }
   }
 
-  async triggerNoteWithVelocity(trackId: string, note: string, durationSeconds: number, velocity: number = 0.5) {
+  async triggerNoteWithVelocity(
+    trackId: string,
+    note: string,
+    durationSeconds: number,
+    velocity: number = 0.5,
+  ) {
     if (Tone.context.state !== "running") await Tone.start();
     const ctx = this.trackContexts.get(trackId);
     if (ctx && ctx.synth && !ctx.synth.disposed) {
@@ -2734,11 +2960,7 @@ class AudioEngine {
     }
   }
 
-  async triggerNoteStart(
-    trackId: string,
-    note: string,
-    velocity: number = 0.8,
-  ) {
+  async triggerNoteStart(trackId: string, note: string, velocity: number = 0.8) {
     if (Tone.context.state !== "running") {
       await Tone.start();
       try {
@@ -2777,7 +2999,7 @@ class AudioEngine {
     return this.exportWithConfig({
       title: "mixdown",
       format: "wav",
-      exportType: "master"
+      exportType: "master",
     });
   }
 
@@ -2789,10 +3011,10 @@ class AudioEngine {
   }) {
     const store = useDawStore.getState();
     store.setExportProgressConfig(config.title, config.format, config.exportType);
-    
+
     // Quick timeline length pre-flight check to get estimated rendering time
     let max16ths = 0;
-    const activeTrackIds = new Set((store.tracks || []).map(t => t.id));
+    const activeTrackIds = new Set((store.tracks || []).map((t) => t.id));
     Object.values(store.clips || {}).forEach((clip) => {
       if (config.exportType === "single" && clip.trackId !== config.singleTrackId) return;
       if (!activeTrackIds.has(clip.trackId)) return;
@@ -2826,7 +3048,7 @@ class AudioEngine {
       }
 
       const elapsedMs = Date.now() - startTimeStamp;
-      const remainingMs = Math.max(100, (estRenderTimeMs + 1000) - elapsedMs); // Add 1s buffer for format wrapping
+      const remainingMs = Math.max(100, estRenderTimeMs + 1000 - elapsedMs); // Add 1s buffer for format wrapping
       const remainingSecs = Math.max(1, Math.ceil(remainingMs / 1000));
 
       if (progress < 95) {
@@ -2845,7 +3067,12 @@ class AudioEngine {
         // Safe smooth trickle as we encode the audio container format
         progress += 0.25;
         if (progress > 99) progress = 99;
-        store.setIsExporting(true, Math.floor(progress), "Encoding to target audio codec, wrapping audio blocks...", remainingSecs);
+        store.setIsExporting(
+          true,
+          Math.floor(progress),
+          "Encoding to target audio codec, wrapping audio blocks...",
+          remainingSecs,
+        );
       }
     }, stepMs);
 
@@ -2857,8 +3084,8 @@ class AudioEngine {
       if (config.exportType === "stems") {
         // Zip multi-track stem export!
         const zip = new JSZip();
-        const tracksToExport = store.tracks.filter(t => t.clips && t.clips.length > 0);
-        
+        const tracksToExport = store.tracks.filter((t) => t.clips && t.clips.length > 0);
+
         if (tracksToExport.length === 0) {
           throw new Error("No tracks with clips found to export stems!");
         }
@@ -2874,20 +3101,28 @@ class AudioEngine {
 
           renderedCount++;
           const currentProgress = Math.round((renderedCount / tracksToExport.length) * 80);
-          const stemsRemainingSecs = Math.max(1, Math.ceil((tracksToExport.length - renderedCount + 1) * secondsPerStem));
+          const stemsRemainingSecs = Math.max(
+            1,
+            Math.ceil((tracksToExport.length - renderedCount + 1) * secondsPerStem),
+          );
 
           store.setIsExporting(
-            true, 
-            currentProgress, 
+            true,
+            currentProgress,
             `Rendering stem ${renderedCount}/${tracksToExport.length}: "${track.name}"...`,
-            stemsRemainingSecs
+            stemsRemainingSecs,
           );
 
           const result = await this.exportMix({ onlyTrackId: track.id });
-          const mimeType = config.format === "mp3" ? "audio/mp3" : config.format === "flac" ? "audio/flac" : "audio/wav";
+          const mimeType =
+            config.format === "mp3"
+              ? "audio/mp3"
+              : config.format === "flac"
+                ? "audio/flac"
+                : "audio/wav";
           const finalBlob = new Blob([result.blob], { type: mimeType });
           const safeTrackName = track.name.replace(/[\s\W]+/g, "_") || `track_${track.id}`;
-          
+
           zip.file(`${safeTrackName}.${config.format}`, finalBlob);
         }
 
@@ -2903,18 +3138,22 @@ class AudioEngine {
 
         clearInterval(interval);
         store.setIsExporting(true, 100, "Stems package complete! Readying download...", 0);
-        await new Promise(resolve => setTimeout(resolve, 800));
+        await new Promise((resolve) => setTimeout(resolve, 800));
         store.setIsExporting(false, 0, "", 0);
 
         const url = URL.createObjectURL(zipBlob);
         return url;
-
       } else {
         // Master or Single track export
         const singleOrMasterEstSecs = Math.max(2, Math.ceil(estRenderTimeMs / 1000));
-        store.setIsExporting(true, 10, `Synthesizing ${config.exportType === "single" ? "single track" : "stereo master"} bounce buffer...`, singleOrMasterEstSecs);
+        store.setIsExporting(
+          true,
+          10,
+          `Synthesizing ${config.exportType === "single" ? "single track" : "stereo master"} bounce buffer...`,
+          singleOrMasterEstSecs,
+        );
         const result = await this.exportMix({
-          onlyTrackId: config.exportType === "single" ? config.singleTrackId : undefined
+          onlyTrackId: config.exportType === "single" ? config.singleTrackId : undefined,
         });
 
         if (useDawStore.getState().isExportCancelled) {
@@ -2922,18 +3161,22 @@ class AudioEngine {
         }
 
         // Convert Blob to selected format MIME type
-        const mimeType = config.format === "mp3" ? "audio/mp3" : config.format === "flac" ? "audio/flac" : "audio/wav";
+        const mimeType =
+          config.format === "mp3"
+            ? "audio/mp3"
+            : config.format === "flac"
+              ? "audio/flac"
+              : "audio/wav";
         const finalBlob = new Blob([result.blob], { type: mimeType });
 
         clearInterval(interval);
         store.setIsExporting(true, 100, "Export mixdown ready! Triggering download...", 0);
-        await new Promise(resolve => setTimeout(resolve, 800));
+        await new Promise((resolve) => setTimeout(resolve, 800));
         store.setIsExporting(false, 0, "", 0);
 
         const url = URL.createObjectURL(finalBlob);
         return url;
       }
-
     } catch (err) {
       clearInterval(interval);
       store.setIsExporting(false, 0, "", 0);
@@ -2943,7 +3186,7 @@ class AudioEngine {
 
   private getNativeAudioBuffer(buffer: any): AudioBuffer | null {
     if (!buffer) return null;
-    const nativeBuffer = typeof buffer.get === "function" ? buffer.get() : (buffer._buffer || buffer);
+    const nativeBuffer = typeof buffer.get === "function" ? buffer.get() : buffer._buffer || buffer;
     if (nativeBuffer && typeof nativeBuffer.getChannelData === "function") return nativeBuffer;
     return null;
   }
@@ -2971,7 +3214,12 @@ class AudioEngine {
     return impulse;
   }
 
-  private makeTrackMixChain(ctx: OfflineAudioContext, track: any, state: any, destination: AudioNode) {
+  private makeTrackMixChain(
+    ctx: OfflineAudioContext,
+    track: any,
+    state: any,
+    destination: AudioNode,
+  ) {
     const input = ctx.createGain();
     let current: AudioNode = input;
     const fx = track.fx || {};
@@ -3036,7 +3284,7 @@ class AudioEngine {
       const curve = new Float32Array(2048);
       for (let i = 0; i < curve.length; i++) {
         const x = (i * 2) / curve.length - 1;
-        curve[i] = ((3 + amount) * x * 20 * Math.PI / 180) / (Math.PI + amount * Math.abs(x));
+        curve[i] = ((3 + amount) * x * 20 * Math.PI) / 180 / (Math.PI + amount * Math.abs(x));
       }
       shaper.curve = curve;
       shaper.oversample = "2x";
@@ -3051,9 +3299,13 @@ class AudioEngine {
       connectSerial(comp);
     }
     if (fx.delay?.enabled || fx.pingPongDelay?.enabled) {
-      const mix = fx.pingPongDelay?.enabled ? (Number(fx.pingPongDelay.wet) || 0.3) : (Number(fx.delay.mix) || 0.2);
+      const mix = fx.pingPongDelay?.enabled
+        ? Number(fx.pingPongDelay.wet) || 0.3
+        : Number(fx.delay.mix) || 0.2;
       const timeValue = fx.pingPongDelay?.enabled ? fx.pingPongDelay.time : fx.delay.time;
-      const seconds = String(timeValue || "8n").includes("4n") ? 60 / Math.max(1, state.bpm || 120) : (60 / Math.max(1, state.bpm || 120)) / 2;
+      const seconds = String(timeValue || "8n").includes("4n")
+        ? 60 / Math.max(1, state.bpm || 120)
+        : 60 / Math.max(1, state.bpm || 120) / 2;
       const splitter = ctx.createGain();
       const dry = ctx.createGain();
       const delay = ctx.createDelay(Math.max(1, seconds * 2));
@@ -3063,7 +3315,15 @@ class AudioEngine {
       dry.gain.value = Math.max(0, 1 - mix);
       wet.gain.value = Math.max(0, Math.min(1, mix));
       delay.delayTime.value = seconds;
-      feedback.gain.value = Math.max(0, Math.min(0.85, fx.pingPongDelay?.enabled ? (Number(fx.pingPongDelay.feedback) || 0.3) : (Number(fx.delay.feedback) || 0.25)));
+      feedback.gain.value = Math.max(
+        0,
+        Math.min(
+          0.85,
+          fx.pingPongDelay?.enabled
+            ? Number(fx.pingPongDelay.feedback) || 0.3
+            : Number(fx.delay.feedback) || 0.25,
+        ),
+      );
       current.connect(splitter);
       splitter.connect(dry).connect(sum);
       splitter.connect(delay).connect(wet).connect(sum);
@@ -3098,7 +3358,15 @@ class AudioEngine {
     return input;
   }
 
-  private scheduleSynthNote(ctx: OfflineAudioContext, input: AudioNode, note: any, startSecs: number, durationSecs: number, track: any, gainMul = 1) {
+  private scheduleSynthNote(
+    ctx: OfflineAudioContext,
+    input: AudioNode,
+    note: any,
+    startSecs: number,
+    durationSecs: number,
+    track: any,
+    gainMul = 1,
+  ) {
     if (durationSecs <= 0 || startSecs >= ctx.length / ctx.sampleRate) return;
     const frequency = this.noteToFrequency(note.note || "C4");
     const velocity = Math.max(0, Math.min(1, Number(note.velocity ?? 0.8))) * gainMul;
@@ -3107,13 +3375,19 @@ class AudioEngine {
     const safeEnd = Math.min(ctx.length / ctx.sampleRate, safeStart + durationSecs);
     gain.gain.setValueAtTime(0, safeStart);
     gain.gain.linearRampToValueAtTime(velocity * 0.26, safeStart + 0.008);
-    gain.gain.exponentialRampToValueAtTime(Math.max(0.0001, velocity * 0.18), Math.min(safeEnd, safeStart + Math.max(0.02, durationSecs * 0.65)));
+    gain.gain.exponentialRampToValueAtTime(
+      Math.max(0.0001, velocity * 0.18),
+      Math.min(safeEnd, safeStart + Math.max(0.02, durationSecs * 0.65)),
+    );
     gain.gain.linearRampToValueAtTime(0, safeEnd);
 
     if (track.synthType === "membrane" || track.synthType === "synthbass") {
       const osc = ctx.createOscillator();
       osc.type = track.synthType === "membrane" ? "sine" : "sawtooth";
-      osc.frequency.setValueAtTime(track.synthType === "membrane" ? Math.max(45, frequency / 4) : frequency, safeStart);
+      osc.frequency.setValueAtTime(
+        track.synthType === "membrane" ? Math.max(45, frequency / 4) : frequency,
+        safeStart,
+      );
       osc.connect(gain).connect(input);
       osc.start(safeStart);
       osc.stop(safeEnd + 0.02);
@@ -3121,7 +3395,12 @@ class AudioEngine {
     }
 
     const osc = ctx.createOscillator();
-    osc.type = track.synthType === "fm" || track.synthType === "bells" ? "triangle" : track.synthType === "pad" || track.synthType === "strings" ? "sawtooth" : "square";
+    osc.type =
+      track.synthType === "fm" || track.synthType === "bells"
+        ? "triangle"
+        : track.synthType === "pad" || track.synthType === "strings"
+          ? "sawtooth"
+          : "square";
     osc.frequency.value = frequency;
     osc.connect(gain).connect(input);
     osc.start(safeStart);
@@ -3129,7 +3408,8 @@ class AudioEngine {
   }
 
   private async renderNativeMixChunk(params: any): Promise<AudioBuffer> {
-    const { state, options, clipBufferMap, renderDuration, chunkStartSec, chunkDurationSec } = params;
+    const { state, options, clipBufferMap, renderDuration, chunkStartSec, chunkDurationSec } =
+      params;
     const sampleRate = 44100;
     const ctx = new OfflineAudioContext(2, Math.ceil(chunkDurationSec * sampleRate), sampleRate);
     const oneSixteenthSecs = 15 / Math.max(1, Number(state.bpm) || 120);
@@ -3148,8 +3428,11 @@ class AudioEngine {
     const trackInputs = new Map<string, AudioNode>();
     const audibleTrackIds = new Set<string>();
     (state.tracks || []).forEach((track: any) => {
-      const parentSoloed = track.groupId && (state.tracks || []).find((t: any) => t.id === track.groupId)?.soloed;
-      const audible = options?.onlyTrackId ? track.id === options.onlyTrackId : (!track.muted && (!hasSolo || track.soloed || parentSoloed || track.type === "group"));
+      const parentSoloed =
+        track.groupId && (state.tracks || []).find((t: any) => t.id === track.groupId)?.soloed;
+      const audible = options?.onlyTrackId
+        ? track.id === options.onlyTrackId
+        : !track.muted && (!hasSolo || track.soloed || parentSoloed || track.type === "group");
       if (audible) audibleTrackIds.add(track.id);
       const input = this.makeTrackMixChain(ctx, { ...track, muted: !audible }, state, masterInput);
       if (!audible) {
@@ -3167,9 +3450,14 @@ class AudioEngine {
       const input = trackInputs.get(clip.trackId);
       if (!track || !input || !audibleTrackIds.has(track.id)) return;
       const speedBase = Math.max(0.01, Number(clip.speed) || 1);
-      const speed = clip.originalBpm ? speedBase * ((Number(state.bpm) || 120) / Math.max(1, Number(clip.originalBpm) || 120)) : speedBase;
+      const speed = clip.originalBpm
+        ? speedBase * ((Number(state.bpm) || 120) / Math.max(1, Number(clip.originalBpm) || 120))
+        : speedBase;
       const clipStartSec = (Number(clip.startTime) || 0) * oneSixteenthSecs;
-      const clipDurSec = Math.max(0.01, (Number(clip.duration) || 0.01) * oneSixteenthSecs / speed);
+      const clipDurSec = Math.max(
+        0.01,
+        ((Number(clip.duration) || 0.01) * oneSixteenthSecs) / speed,
+      );
       const clipEndSec = clipStartSec + clipDurSec;
       const chunkEndSec = chunkStartSec + chunkDurationSec;
       if (clipEndSec <= chunkStartSec || clipStartSec >= chunkEndSec) return;
@@ -3177,8 +3465,13 @@ class AudioEngine {
       if (track.type === "midi") {
         const baseNotes = clip.notes || [];
         let maxNoteEnd = 0;
-        baseNotes.forEach((n: any) => { maxNoteEnd = Math.max(maxNoteEnd, (Number(n.startTime) || 0) + (Number(n.duration) || 0)); });
-        const loopLength = Math.max(0.01, Number(clip.loopLength) || Math.max(4, Math.ceil(maxNoteEnd / 4) * 4));
+        baseNotes.forEach((n: any) => {
+          maxNoteEnd = Math.max(maxNoteEnd, (Number(n.startTime) || 0) + (Number(n.duration) || 0));
+        });
+        const loopLength = Math.max(
+          0.01,
+          Number(clip.loopLength) || Math.max(4, Math.ceil(maxNoteEnd / 4) * 4),
+        );
         const totalDuration = Math.max(0.01, Number(clip.duration) || 1);
         const clipOffset = Number(clip.audioOffset) || 0;
         baseNotes.forEach((note: any) => {
@@ -3188,11 +3481,23 @@ class AudioEngine {
             if (rawStart >= totalDuration) break;
             if (end <= 0) continue;
             const clippedStart = Math.max(0, rawStart);
-            const clippedDur = Math.min((Number(note.duration) || 0) - (clippedStart - rawStart), totalDuration - clippedStart);
-            const absStart = ((Number(clip.startTime) || 0) + clippedStart / speed) * oneSixteenthSecs;
+            const clippedDur = Math.min(
+              (Number(note.duration) || 0) - (clippedStart - rawStart),
+              totalDuration - clippedStart,
+            );
+            const absStart =
+              ((Number(clip.startTime) || 0) + clippedStart / speed) * oneSixteenthSecs;
             const absDur = (clippedDur / speed) * oneSixteenthSecs;
             if (absStart + absDur <= chunkStartSec || absStart >= chunkEndSec) continue;
-            this.scheduleSynthNote(ctx, input, note, Math.max(0, absStart - chunkStartSec), Math.min(absDur, chunkEndSec - absStart), track, Math.pow(10, (Number(clip.gain) || 0) / 20));
+            this.scheduleSynthNote(
+              ctx,
+              input,
+              note,
+              Math.max(0, absStart - chunkStartSec),
+              Math.min(absDur, chunkEndSec - absStart),
+              track,
+              Math.pow(10, (Number(clip.gain) || 0) / 20),
+            );
           }
         });
       } else if (track.type === "audio" && clip.audioUrl) {
@@ -3202,21 +3507,39 @@ class AudioEngine {
         const localEnd = Math.min(clipEndSec, chunkEndSec);
         const source = ctx.createBufferSource();
         source.buffer = nativeBuffer;
-        source.playbackRate.value = speed * Math.pow(2, ((track.fx?.pitchShift?.enabled ? Number(track.fx.pitchShift.pitch) || 0 : 0) + (track.fx?.voicePitcher?.enabled ? Number(track.fx.voicePitcher.shift) || 0 : 0)) / 12);
+        source.playbackRate.value =
+          speed *
+          Math.pow(
+            2,
+            ((track.fx?.pitchShift?.enabled ? Number(track.fx.pitchShift.pitch) || 0 : 0) +
+              (track.fx?.voicePitcher?.enabled ? Number(track.fx.voicePitcher.shift) || 0 : 0)) /
+              12,
+          );
         const clipGain = ctx.createGain();
         clipGain.gain.value = Math.pow(10, (Number(clip.gain) || 0) / 20);
         const fadeIn = Math.max(0, Number(clip.fadeIn) || 0);
         const fadeOut = Math.max(0, Number(clip.fadeOut) || 0);
         const startAt = localStart - chunkStartSec;
         const playFor = Math.max(0.01, localEnd - localStart);
-        let offsetSecs = Math.max(0, (Number(clip.audioOffset) || 0) * oneSixteenthSecs + Math.max(0, localStart - clipStartSec) * speed);
-        if (nativeBuffer.duration > 0) offsetSecs = Math.min(offsetSecs, Math.max(0, nativeBuffer.duration - 0.01));
+        let offsetSecs = Math.max(
+          0,
+          (Number(clip.audioOffset) || 0) * oneSixteenthSecs +
+            Math.max(0, localStart - clipStartSec) * speed,
+        );
+        if (nativeBuffer.duration > 0)
+          offsetSecs = Math.min(offsetSecs, Math.max(0, nativeBuffer.duration - 0.01));
         if (fadeIn > 0 && localStart <= clipStartSec + fadeIn) {
           clipGain.gain.setValueAtTime(0, startAt);
-          clipGain.gain.linearRampToValueAtTime(Math.pow(10, (Number(clip.gain) || 0) / 20), Math.min(startAt + fadeIn, startAt + playFor));
+          clipGain.gain.linearRampToValueAtTime(
+            Math.pow(10, (Number(clip.gain) || 0) / 20),
+            Math.min(startAt + fadeIn, startAt + playFor),
+          );
         }
         if (fadeOut > 0 && localEnd >= clipEndSec - fadeOut) {
-          clipGain.gain.setValueAtTime(clipGain.gain.value, Math.max(startAt, startAt + playFor - fadeOut));
+          clipGain.gain.setValueAtTime(
+            clipGain.gain.value,
+            Math.max(startAt, startAt + playFor - fadeOut),
+          );
           clipGain.gain.linearRampToValueAtTime(0, startAt + playFor);
         }
         source.connect(clipGain).connect(input);
@@ -3235,14 +3558,28 @@ class AudioEngine {
     for (let start = 0; start < params.renderDuration; start += chunkSeconds) {
       if (useDawStore.getState().isExportCancelled) throw new Error("Export aborted by user");
       const chunkDurationSec = Math.min(chunkSeconds, params.renderDuration - start);
-      const chunk = await this.renderNativeMixChunk({ ...params, chunkStartSec: start, chunkDurationSec });
+      const chunk = await this.renderNativeMixChunk({
+        ...params,
+        chunkStartSec: start,
+        chunkDurationSec,
+      });
       const copyLength = Math.min(chunk.length, totalLength - written);
       for (let ch = 0; ch < 2; ch++) {
-        channels[ch].set(chunk.getChannelData(Math.min(ch, chunk.numberOfChannels - 1)).subarray(0, copyLength), written);
+        channels[ch].set(
+          chunk.getChannelData(Math.min(ch, chunk.numberOfChannels - 1)).subarray(0, copyLength),
+          written,
+        );
       }
       written += copyLength;
       const pct = Math.min(92, Math.round((written / totalLength) * 92));
-      useDawStore.getState().setIsExporting(true, pct, "Rendering playlist timeline with track effects...", Math.max(1, Math.ceil((params.renderDuration - start) / 10)));
+      useDawStore
+        .getState()
+        .setIsExporting(
+          true,
+          pct,
+          "Rendering playlist timeline with track effects...",
+          Math.max(1, Math.ceil((params.renderDuration - start) / 10)),
+        );
     }
     return {
       numberOfChannels: 2,
@@ -3261,7 +3598,7 @@ class AudioEngine {
     Object.values(state.clips || {}).forEach((clip) => {
       // Find clips belonging to active tracks or the soloed/only track
       if (options?.onlyTrackId && clip.trackId !== options.onlyTrackId) return;
-      
+
       const clipStart = Number(clip.startTime) || 0;
       const clipDuration = Number(clip.duration) || 0;
       const end16ths = clipStart + clipDuration;
@@ -3279,22 +3616,29 @@ class AudioEngine {
     const renderDuration = cappedDurationSeconds + 1.5;
 
     const brokenUrls: Record<string, string> = {
-      'https://tonejs.github.io/audio/loop/FW3_snare.mp3': 'https://tonejs.github.io/audio/drum-samples/breakbeat.mp3',
-      'https://tonejs.github.io/audio/loop/chords.mp3': 'https://tonejs.github.io/audio/casio/A1.mp3',
-      'https://tonejs.github.io/audio/loop/synth.mp3': 'https://tonejs.github.io/audio/casio/A1.mp3',
-      'https://tonejs.github.io/audio/loop/melody.mp3': 'https://tonejs.github.io/audio/casio/A1.mp3',
-      'https://tonejs.github.io/audio/drum-samples/808kick.mp3': 'https://tonejs.github.io/audio/instruments/kick.mp3'
+      "https://tonejs.github.io/audio/loop/FW3_snare.mp3":
+        "https://tonejs.github.io/audio/drum-samples/breakbeat.mp3",
+      "https://tonejs.github.io/audio/loop/chords.mp3":
+        "https://tonejs.github.io/audio/casio/A1.mp3",
+      "https://tonejs.github.io/audio/loop/synth.mp3":
+        "https://tonejs.github.io/audio/casio/A1.mp3",
+      "https://tonejs.github.io/audio/loop/melody.mp3":
+        "https://tonejs.github.io/audio/casio/A1.mp3",
+      "https://tonejs.github.io/audio/drum-samples/808kick.mp3":
+        "https://tonejs.github.io/audio/instruments/kick.mp3",
     };
 
     // Preload audio buffers with high-speed parallel abortable fetch to prevent browser network hang loops
     const bufferPromises = Object.values(state.clips || {})
-      .filter((clip) => clip.audioUrl && (!options?.onlyTrackId || clip.trackId === options.onlyTrackId))
+      .filter(
+        (clip) => clip.audioUrl && (!options?.onlyTrackId || clip.trackId === options.onlyTrackId),
+      )
       .map(async (clip) => {
         let url = clip.audioUrl!;
         if (brokenUrls[url]) {
           url = brokenUrls[url];
         }
-        
+
         if (globalBufferCache.has(url)) {
           return { clipId: clip.id, buffer: globalBufferCache.get(url)! };
         }
@@ -3322,7 +3666,11 @@ class AudioEngine {
         try {
           const rawCtx = Tone.getContext().rawContext;
           // Create a valid silent audio buffer of 0.1 seconds
-          const silentNativeBuffer = rawCtx.createBuffer(1, Math.max(1, Math.floor(rawCtx.sampleRate * 0.1)), rawCtx.sampleRate);
+          const silentNativeBuffer = rawCtx.createBuffer(
+            1,
+            Math.max(1, Math.floor(rawCtx.sampleRate * 0.1)),
+            rawCtx.sampleRate,
+          );
           if (silentNativeBuffer.numberOfChannels > 0) {
             const channel = silentNativeBuffer.getChannelData(0);
             for (let idx = 0; idx < channel.length; idx++) {
@@ -3338,9 +3686,7 @@ class AudioEngine {
 
     const loadedBuffers = await Promise.all(bufferPromises);
     const clipBufferMap = new Map<string, Tone.ToneAudioBuffer>();
-    loadedBuffers.forEach((item) =>
-      clipBufferMap.set(item.clipId, item.buffer),
-    );
+    loadedBuffers.forEach((item) => clipBufferMap.set(item.clipId, item.buffer));
 
     // Mobile Chromium/WebView can throw a bare SyntaxError inside Tone.Offline's
     // AudioWorklet capability probe. Export through a direct Web Audio offline
@@ -3390,18 +3736,21 @@ class AudioEngine {
 export const toggleGlobalRecording = async () => {
   await audioEngine.init();
   const state = useDawStore.getState();
-  
+
   if (!state.isRecording) {
-    const hasArmed = state.tracks.some(t => t.armed);
-    const audioToRecord = state.tracks.some(t => t.type === 'audio' && (t.armed || (!hasArmed && t.id === state.selectedTrackId)));
-    
+    const hasArmed = state.tracks.some((t) => t.armed);
+    const audioToRecord = state.tracks.some(
+      (t) => t.type === "audio" && (t.armed || (!hasArmed && t.id === state.selectedTrackId)),
+    );
+
     if (audioToRecord) {
       await audioEngine.toggleMicMonitor(state.inputMonitoring);
       await audioEngine.startRecording();
     }
 
     const currentPosition = state.transportPosition;
-    const currentTicks = Tone.Transport.state === "started" ? Tone.Transport.ticks : currentPosition * 48;
+    const currentTicks =
+      Tone.Transport.state === "started" ? Tone.Transport.ticks : currentPosition * 48;
     const start16ths = Math.max(0, currentTicks / 48);
 
     state.setIsRecording(true, start16ths);
@@ -3414,42 +3763,54 @@ export const toggleGlobalRecording = async () => {
     state.setPlaybackState("stopped");
 
     const trackResults = await audioEngine.stopRecording();
-    
+
     trackResults.forEach(({ trackId, url, peaks, start16ths, duration16ths, segments }) => {
-       if (!url) return;
-       const addedClips: { id: string, seg: any }[] = [];
-       let clipIdToAnalyze = '';
-       
-       if (segments && segments.length > 0) {
-         segments.forEach(seg => {
-           const cid = state.addClip(trackId, start16ths + seg.start16thsOffset, url, seg.peaks, seg.duration16ths, state.bpm, seg.audioOffset16ths);
-           addedClips.push({ id: cid, seg });
-         });
-       } else {
-         clipIdToAnalyze = state.addClip(trackId, start16ths, url, peaks, duration16ths, state.bpm);
-       }
-       
-       // Auto-analyze pitch for the recorded clip asynchronously
-       setTimeout(async () => {
-          try {
-             const toneBuffer = await new Tone.ToneAudioBuffer().load(url);
-             const audioBuffer = toneBuffer.get() as AudioBuffer;
-             const notes = await analyzeAudioPitch(audioBuffer, state.bpm);
-             
-             if (addedClips.length > 0) {
-                addedClips.forEach(({ id, seg }) => {
-                   const offsetNotes = notes
-                     .filter(n => n.startTime >= seg.audioOffset16ths && n.startTime <= seg.audioOffset16ths + seg.duration16ths)
-                     .map(n => ({...n, startTime: n.startTime - seg.audioOffset16ths}));
-                   useDawStore.getState().updateClip(id, { vocalNotes: offsetNotes });
-                });
-             } else if (clipIdToAnalyze) {
-                useDawStore.getState().updateClip(clipIdToAnalyze, { vocalNotes: notes });
-             }
-          } catch(e) {
-             console.warn("Auto-analysis failed", e);
+      if (!url) return;
+      const addedClips: { id: string; seg: any }[] = [];
+      let clipIdToAnalyze = "";
+
+      if (segments && segments.length > 0) {
+        segments.forEach((seg) => {
+          const cid = state.addClip(
+            trackId,
+            start16ths + seg.start16thsOffset,
+            url,
+            seg.peaks,
+            seg.duration16ths,
+            state.bpm,
+            seg.audioOffset16ths,
+          );
+          addedClips.push({ id: cid, seg });
+        });
+      } else {
+        clipIdToAnalyze = state.addClip(trackId, start16ths, url, peaks, duration16ths, state.bpm);
+      }
+
+      // Auto-analyze pitch for the recorded clip asynchronously
+      setTimeout(async () => {
+        try {
+          const toneBuffer = await new Tone.ToneAudioBuffer().load(url);
+          const audioBuffer = toneBuffer.get() as AudioBuffer;
+          const notes = await analyzeAudioPitch(audioBuffer, state.bpm);
+
+          if (addedClips.length > 0) {
+            addedClips.forEach(({ id, seg }) => {
+              const offsetNotes = notes
+                .filter(
+                  (n) =>
+                    n.startTime >= seg.audioOffset16ths &&
+                    n.startTime <= seg.audioOffset16ths + seg.duration16ths,
+                )
+                .map((n) => ({ ...n, startTime: n.startTime - seg.audioOffset16ths }));
+              useDawStore.getState().updateClip(id, { vocalNotes: offsetNotes });
+            });
+          } else if (clipIdToAnalyze) {
+            useDawStore.getState().updateClip(clipIdToAnalyze, { vocalNotes: notes });
           }
-       }, 100);
+        } catch (e) {
+          console.warn("Auto-analysis failed", e);
+        }
+      }, 100);
     });
   }
 };
