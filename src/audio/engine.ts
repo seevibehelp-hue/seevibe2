@@ -2320,15 +2320,20 @@ class AudioEngine {
         // Use notesRevision (an integer counter) instead of JSON.stringify for O(1) comparison.
         let part = this.parts.get(clip.id);
         const notesSame =
-          prevClip && clip.notesRevision !== undefined
-            ? clip.notesRevision === prevClip.notesRevision
-            : (() => {
-                const prevNotes = (prevClip.notes || []).filter((note) => !note.isRecording);
-                return (
-                  baseNotes.length === prevNotes.length &&
-                  JSON.stringify(baseNotes) === JSON.stringify(prevNotes)
-                );
-              })();
+                    prevClip && clip.notesRevision !== undefined
+                      ? clip.notesRevision === prevClip.notesRevision
+                      : (() => {
+                          // Guard prevClip: when a clip is newly-created, prevClip is
+                          // undefined. The IIFE branch here is reached when either
+                          // prevClip is undefined OR notesRevision is missing —
+                          // treat missing prevClip as "notes definitely changed".
+                          if (!prevClip) return false;
+                          const prevNotes = (prevClip.notes || []).filter((note) => !note.isRecording);
+                          return (
+                            baseNotes.length === prevNotes.length &&
+                            JSON.stringify(baseNotes) === JSON.stringify(prevNotes)
+                          );
+                        })();
         const paramsSame =
           prevClip &&
           prevClip.startTime === clip.startTime &&

@@ -8,9 +8,15 @@ export function AddTrackModal({ isOpen, onClose }: { isOpen: boolean; onClose: (
   const { addTrack } = useDawStore();
 
   const handleCreate = (type: TrackType, synthType?: SynthType) => {
-    addTrack(type, synthType);
-    onClose();
-  };
+        addTrack(type, synthType);
+        // Defer the close to the next microtask so it runs after the Zustand
+        // store update from addTrack has settled. Without this, in some cases
+        // (e.g. when addTrack triggers a re-render that re-evaluates the
+        // parent's `isAddTrackOpen` prop synchronously) the parent can briefly
+        // re-render with the old `true` value before the close sticks, leaving
+        // the modal open while the track is already added behind it.
+        queueMicrotask(() => onClose());
+      };
 
   if (!isOpen) return null;
 
