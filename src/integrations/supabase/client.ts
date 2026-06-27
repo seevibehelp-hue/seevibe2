@@ -2,17 +2,31 @@
 import { createClient } from '@supabase/supabase-js';
 import type { Database } from './types';
 
+// Stable magic prefix used to detect stub-client errors in the UI.
+// When the UI sees this prefix it knows to show a "missing env vars" banner
+// instead of the generic Supabase error.
+export const SUPABASE_STUB_PREFIX = "STUB_CLIENT:";
+export const SUPABASE_STUB_NOT_CONFIGURED =
+  SUPABASE_STUB_PREFIX +
+  "Supabase env vars missing on deployment host. " +
+  "Add VITE_SUPABASE_URL + VITE_SUPABASE_PUBLISHABLE_KEY to " +
+  "Vercel → Settings → Environment Variables → Production, then redeploy.";
+
 // In-memory stub that returns empty results so the app can render even when
 // Supabase env vars are missing on the deployment host (e.g. fresh Vercel
 // project without dashboard env vars configured). Every method resolves with
 // a benign empty shape — UI components render, no SSR crash.
-function createStubClient(): any {
+function createStubClient(missingVars: string[]): any {
+  const detail = missingVars.length
+    ? ` Missing: ${missingVars.join(", ")}.`
+    : "";
+  const errMsg = SUPABASE_STUB_NOT_CONFIGURED;
   const warn = () => {
     if (typeof console !== "undefined") {
       console.warn(
-        "[Supabase] stub client in use — Supabase env vars not configured. " +
-          "Add VITE_SUPABASE_URL + VITE_SUPABASE_PUBLISHABLE_KEY to your " +
-          "deployment environment to enable auth/projects/storage.",
+        `[Supabase] stub client in use — env vars not configured.${detail} ` +
+          `Add the vars to your deployment environment (Vercel → Settings → ` +
+          `Environment Variables → Production) and redeploy.`,
       );
     }
   };
@@ -24,7 +38,7 @@ function createStubClient(): any {
         if (prop === "single" || prop === "maybeSingle") {
           return async () => {
             warn();
-            return { data: null, error: { message: "Supabase not configured" } };
+            return { data: null, error: { message: errMsg, name: "SupabaseStubError", code: "STUB_CLIENT" } };
           };
         }
         if (prop === "order" || prop === "eq" || prop === "select" || prop === "insert" || prop === "update" || prop === "upsert" || prop === "delete" || prop === "in" || prop === "limit" || prop === "range" || prop === "match" || prop === "or" || prop === "filter" || prop === "not" || prop === "gte" || prop === "lte" || prop === "gt" || prop === "lt" || prop === "like" || prop === "ilike" || prop === "is" || prop === "neq") {
@@ -52,31 +66,30 @@ function createStubClient(): any {
     },
     signInWithPassword: async () => {
       warn();
-      return { data: { user: null, session: null }, error: { message: "Supabase not configured" } };
+      return { data: { user: null, session: null }, error: { message: errMsg, name: "SupabaseStubError", code: "STUB_CLIENT" } };
     },
     signInWithOAuth: async () => {
       warn();
-      return { data: { provider: null, url: null }, error: { message: "Supabase not configured" } };
+      return { data: { provider: null, url: null }, error: { message: errMsg, name: "SupabaseStubError", code: "STUB_CLIENT" } };
     },
     signUp: async () => {
       warn();
-      return { data: { user: null, session: null }, error: { message: "Supabase not configured" } };
+      return { data: { user: null, session: null }, error: { message: errMsg, name: "SupabaseStubError", code: "STUB_CLIENT" } };
     },
     signOut: async () => {
-      warn();
       return { error: null };
     },
   };
   const storage: any = {
     from: () => ({
-      upload: async () => ({ data: null, error: { message: "Supabase not configured" } }),
-      download: async () => ({ data: null, error: { message: "Supabase not configured" } }),
+      upload: async () => ({ data: null, error: { message: errMsg, name: "SupabaseStubError", code: "STUB_CLIENT" } }),
+      download: async () => ({ data: null, error: { message: errMsg, name: "SupabaseStubError", code: "STUB_CLIENT" } }),
       getPublicUrl: () => ({ data: { publicUrl: "" } }),
-      remove: async () => ({ data: null, error: { message: "Supabase not configured" } }),
+      remove: async () => ({ data: null, error: { message: errMsg, name: "SupabaseStubError", code: "STUB_CLIENT" } }),
     }),
   };
   const functions: any = {
-    invoke: async () => ({ data: null, error: { message: "Supabase not configured" } }),
+    invoke: async () => ({ data: null, error: { message: errMsg, name: "SupabaseStubError", code: "STUB_CLIENT" } }),
   };
   const realtime: any = {
     channel: () => ({
@@ -94,7 +107,7 @@ function createStubClient(): any {
         if (prop === "storage") return storage;
         if (prop === "functions") return functions;
         if (prop === "from") return () => chain;
-        if (prop === "rpc") return async () => ({ data: null, error: { message: "Supabase not configured" } });
+        if (prop === "rpc") return async () => ({ data: null, error: { message: errMsg, name: "SupabaseStubError", code: "STUB_CLIENT" } });
         if (prop === "channel") return realtime.channel;
         if (prop === "removeChannel") return realtime.removeChannel;
         return undefined;
@@ -111,17 +124,18 @@ function createSupabaseClient() {
 
   if (!SUPABASE_URL || !SUPABASE_PUBLISHABLE_KEY) {
     const missing = [
-      ...(!SUPABASE_URL ? ["SUPABASE_URL"] : []),
-      ...(!SUPABASE_PUBLISHABLE_KEY ? ["SUPABASE_PUBLISHABLE_KEY"] : []),
+      ...(!SUPABASE_URL ? ["VITE_SUPABASE_URL"] : []),
+      ...(!SUPABASE_PUBLISHABLE_KEY ? ["VITE_SUPABASE_PUBLISHABLE_KEY"] : []),
     ];
     if (typeof console !== "undefined") {
       console.warn(
         `[Supabase] Missing environment variable(s): ${missing.join(", ")}. ` +
           `Returning stub client so the UI can still render. Add the vars to your ` +
-          `deployment environment (e.g. Vercel dashboard → Settings → Environment Variables).`,
+          `deployment environment (e.g. Vercel dashboard → Settings → Environment Variables → Production) ` +
+          `then redeploy.`,
       );
     }
-    return createStubClient() as ReturnType<typeof createClient<Database>>;
+    return createStubClient(missing) as ReturnType<typeof createClient<Database>>;
   }
 
   return createClient<Database>(SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY, {
@@ -143,4 +157,3 @@ export const supabase = new Proxy({} as ReturnType<typeof createSupabaseClient>,
     return Reflect.get(_supabase, prop, receiver);
   },
 });
-

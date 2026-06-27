@@ -5,6 +5,7 @@ import { useNavigate } from 'react-router-dom';
 import { SecurityPolicyModal } from '../components/SecurityPolicyModal';
 import { SeeVibeLogo } from '../components/SeeVibeLogo';
 import { SeeVibeProtectionGate } from '../components/SeeVibeProtectionGate';
+import { SupabaseSetupBanner } from '../components/SupabaseSetupBanner';
 
 export function Auth() {
   const [email, setEmail] = useState('');
@@ -88,7 +89,9 @@ export function Auth() {
           <SeeVibeLogo variant="full" size={76} className="text-center" />
         </div>
         
-        <form onSubmit={handleSubmit} className="space-y-4">
+          <SupabaseSetupBanner error={error} />
+
+          <form onSubmit={handleSubmit} className="space-y-4">
           
           {/* Honeypot Spam Bot Trap (Invisible to real humans, visible to bot crawlers) */}
           <div className="opacity-0 absolute -top-[5000px] -left-[5000px] h-0 w-0 overflow-hidden select-none" aria-hidden="true">

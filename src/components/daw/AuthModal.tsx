@@ -3,6 +3,7 @@ import React, { useState } from 'react';
 import { supabase } from '../../lib/supabase';
 import { SeeVibeLogo } from '../SeeVibeLogo';
 import { SeeVibeProtectionGate } from '../SeeVibeProtectionGate';
+import { SupabaseSetupBanner } from '../SupabaseSetupBanner';
 
 export function AuthModal({ isOpen, onClose }: { isOpen: boolean; onClose: () => void }) {
   const [error, setError] = useState('');
@@ -84,7 +85,9 @@ export function AuthModal({ isOpen, onClose }: { isOpen: boolean; onClose: () =>
           {mode === 'login' ? 'Sign in to SeeVibe' : mode === 'signup' ? 'Create an Account' : 'Reset Password'}
         </h2>
         <p className="text-gray-400 text-sm text-center mb-4">Save your projects and access them anywhere.</p>
-        
+
+        <SupabaseSetupBanner error={error} />
+
         {error && <p className="text-red-500 text-xs mb-3 text-center">{error}</p>}
         {msg && <p className="text-[#00FF9C] text-xs mb-3 text-center">{msg}</p>}
         
