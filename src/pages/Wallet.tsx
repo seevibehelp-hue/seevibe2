@@ -407,11 +407,12 @@ export function Wallet() {
       {/* Checkout Plan Confirmation Modal */}
       {checkoutPlan && (() => {
         const walletNaira = wallet ? Number(wallet.balance_naira) : 0;
-        const grantKey = user ? `premium_demo_grant_claimed_${user.id}` : 'premium_demo_grant_claimed_guest';
-        const alreadyClaimed = localStorage.getItem(grantKey) === 'true';
+        // The demo-grant eligibility flag is now server-tracked (profiles.demo_grant_claimed).
+        // We display the CTA optimistically; the RPC is the source of truth.
         const hasShortfall = walletNaira < checkoutPlan.cost;
         const shortfall = checkoutPlan.cost - walletNaira;
-        const eligibleForGrant = hasShortfall && !alreadyClaimed;
+        const eligibleForGrant = hasShortfall;
+
         
         return (
           <div className="fixed inset-0 bg-black/85 backdrop-blur-md z-50 flex items-center justify-center p-4 animate-in fade-in duration-200">
