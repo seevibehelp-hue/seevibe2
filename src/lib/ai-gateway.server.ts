@@ -1,5 +1,5 @@
 import { createOpenAICompatible } from "@ai-sdk/openai-compatible";
-import type { LanguageModelV1 } from "@ai-sdk/provider";
+import type { LanguageModelV2 } from "@ai-sdk/provider";
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 
 /**
@@ -34,7 +34,7 @@ export interface ResolvedProvider {
 }
 
 export interface ResolvedModel {
-  model: LanguageModelV1;
+  model: LanguageModelV2;
   provider: ResolvedProvider;
 }
 
