@@ -336,9 +336,10 @@ export function FloatingAIOrientedBall() {
         onMouseDown={handleStartDrag}
         onTouchStart={handleStartDrag}
         onClick={() => {
-          if (!isDragging) {
-            setIsExpanded(!isExpanded);
+          if (!didDragRef.current) {
+            setIsExpanded(prev => !prev);
           }
+          didDragRef.current = false;
         }}
         style={{ left: `${position.x}%`, top: `${position.y}%` }}
         className={`fixed z-[9999] h-12 w-12 rounded-full flex items-center justify-center cursor-move transition-shadow select-none ${
