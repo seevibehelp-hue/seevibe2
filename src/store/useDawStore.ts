@@ -43,6 +43,7 @@ interface DawState {
   setInputMonitoring: (enabled: boolean) => void;
   
   chatMessages: { role: 'user' | 'assistant'; content: string }[];
+  chatMessagesByProject: Record<string, { role: 'user' | 'assistant'; content: string }[]>;
   
   // Actions
   setMidiDevices: (devices: { id: string; name: string }[]) => void;
@@ -257,6 +258,7 @@ export const useDawStore = create<DawState>()(
   markedClipIds: [],
   clipboardClips: null,
   chatMessages: [{ role: 'assistant', content: 'Hey! I\'m your AI production assistant. How can I help you with your project today?' }],
+  chatMessagesByProject: {},
   masterVolume: 0,
   setMasterVolume: (volume) => set({ masterVolume: volume }),
   purchasedPlugins: [],
@@ -385,7 +387,24 @@ export const useDawStore = create<DawState>()(
   setIsRecording: (recording, start16ths = null) => set({ isRecording: recording, recordingStart16ths: start16ths }),
   setRecordingCountdown: (count) => set({ recordingCountdown: count }),
   setIsTrackListOpen: (open) => set({ isTrackListOpen: open }),
-  setCurrentProject: (id, name) => set({ currentProjectId: id, currentProjectName: name }),
+  setCurrentProject: (id, name) => set((state) => {
+    // Per-project chat isolation: stash the outgoing project's chat, then
+    // swap in the incoming project's chat (fresh greeting if none exists).
+    const GREETING = { role: 'assistant' as const, content: "Hey! I'm your AI production assistant. How can I help you with your project today?" };
+    const oldKey = state.currentProjectId || '__local__';
+    const newKey = id || '__local__';
+    if (oldKey === newKey) {
+      return { currentProjectId: id, currentProjectName: name };
+    }
+    const buckets = { ...state.chatMessagesByProject, [oldKey]: state.chatMessages };
+    const incoming = buckets[newKey] && buckets[newKey].length > 0 ? buckets[newKey] : [GREETING];
+    return {
+      currentProjectId: id,
+      currentProjectName: name,
+      chatMessagesByProject: buckets,
+      chatMessages: incoming,
+    };
+  }),
 
   setMidiDevices: (devices) => set({ midiDevices: devices }),
   setAudioInputs: (inputs) => set({ audioInputs: inputs }),
@@ -829,11 +848,22 @@ export const useDawStore = create<DawState>()(
     };
   }),
 
-  addChatMessage: (message) => set((state) => ({
-    chatMessages: [...state.chatMessages, message]
-  })),
+  addChatMessage: (message) => set((state) => {
+    const next = [...state.chatMessages, message];
+    const key = state.currentProjectId || '__local__';
+    return {
+      chatMessages: next,
+      chatMessagesByProject: { ...state.chatMessagesByProject, [key]: next },
+    };
+  }),
 
-  clearChat: () => set({ chatMessages: [] })
+  clearChat: () => set((state) => {
+    const key = state.currentProjectId || '__local__';
+    return {
+      chatMessages: [],
+      chatMessagesByProject: { ...state.chatMessagesByProject, [key]: [] },
+    };
+  })
 }), {
   // zundo partialize: only diff musically meaningful state to avoid firing on
   // every UI tick (transport position, loading flags, etc. are excluded).

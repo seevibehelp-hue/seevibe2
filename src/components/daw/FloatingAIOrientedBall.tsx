@@ -47,6 +47,7 @@ export function FloatingAIOrientedBall() {
 
   const dragStartRef = useRef({ x: 0, y: 0 });
   const positionStartRef = useRef({ x: 0, y: 0 });
+  const didDragRef = useRef(false);
   const scrollRef = useRef<HTMLDivElement>(null);
   const logsScrollRef = useRef<HTMLDivElement>(null);
 
@@ -65,10 +66,13 @@ export function FloatingAIOrientedBall() {
 
   if (!isFloatingBallActive) return null;
 
-  // Handlers for dragging
+  // Handlers for dragging. Track *actual* pointer movement in a ref so a
+  // plain click on desktop (mousedown → mouseup with no drift) reliably
+  // opens the panel — the previous `isDragging` state guard raced with
+  // React's async setState and swallowed every click.
   const handleStartDrag = (e: React.MouseEvent | React.TouchEvent) => {
-    e.preventDefault();
     setIsDragging(true);
+    didDragRef.current = false;
     const clientX = 'touches' in e ? e.touches[0].clientX : e.clientX;
     const clientY = 'touches' in e ? e.touches[0].clientY : e.clientY;
     dragStartRef.current = { x: clientX, y: clientY };
@@ -79,14 +83,20 @@ export function FloatingAIOrientedBall() {
     if (!isDragging) return;
     const clientX = 'touches' in e ? e.touches[0].clientX : e.clientX;
     const clientY = 'touches' in e ? e.touches[0].clientY : e.clientY;
-    
+
+    const absDx = Math.abs(clientX - dragStartRef.current.x);
+    const absDy = Math.abs(clientY - dragStartRef.current.y);
+    // Ignore sub-5px jitter so a mouse click doesn't get treated as a drag.
+    if (!didDragRef.current && absDx < 5 && absDy < 5) return;
+    didDragRef.current = true;
+    e.preventDefault?.();
+
     const deltaX = ((clientX - dragStartRef.current.x) / window.innerWidth) * 100;
     const deltaY = ((clientY - dragStartRef.current.y) / window.innerHeight) * 100;
 
     let newX = positionStartRef.current.x + deltaX;
     let newY = positionStartRef.current.y + deltaY;
 
-    // Bounds checking
     if (newX < 5) newX = 5;
     if (newX > 92) newX = 92;
     if (newY < 5) newY = 5;
@@ -326,9 +336,10 @@ export function FloatingAIOrientedBall() {
         onMouseDown={handleStartDrag}
         onTouchStart={handleStartDrag}
         onClick={() => {
-          if (!isDragging) {
-            setIsExpanded(!isExpanded);
+          if (!didDragRef.current) {
+            setIsExpanded(prev => !prev);
           }
+          didDragRef.current = false;
         }}
         style={{ left: `${position.x}%`, top: `${position.y}%` }}
         className={`fixed z-[9999] h-12 w-12 rounded-full flex items-center justify-center cursor-move transition-shadow select-none ${
