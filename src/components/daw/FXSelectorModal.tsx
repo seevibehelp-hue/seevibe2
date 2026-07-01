@@ -214,25 +214,20 @@ export function FXSelectorModal({
         const { error: updErr } = await supabase.from('wallets').update({ tk_balance: newTk }).eq('user_id', user.id);
         if (updErr) throw updErr;
       } else {
-        if (Number(wallet.balance_naira) < priceNaira) {
-          alert(`Insufficient Naira balance. You need ₦${priceNaira.toLocaleString()}, but your balance is ₦${Number(wallet.balance_naira).toLocaleString()}.`);
+        // Atomic server-side deduction (SECURITY DEFINER RPC).
+        const { data: res, error: spendErr } = await supabase.rpc('spend_wallet_naira', {
+          p_amount: priceNaira,
+          p_reason: 'purchase_plugin',
+          p_description: `Purchased DSP Plugin: ${checkoutEffect.name}`,
+        });
+        if (spendErr) throw spendErr;
+        if (!(res as any)?.success) {
+          alert(`Insufficient Naira balance. Need ₦${priceNaira.toLocaleString()}, have ₦${(res as any)?.balance_naira ?? 0}.`);
           setPurchasing(false);
           return;
         }
-
-        const newNaira = Number(wallet.balance_naira) - priceNaira;
-        const { error: updErr } = await supabase.from('wallets').update({ balance_naira: newNaira }).eq('user_id', user.id);
-        if (updErr) throw updErr;
       }
 
-      // Record transaction
-      await supabase.from('wallet_transactions').insert({
-        user_id: user.id,
-        amount_naira: type === 'naira' ? priceNaira : 0,
-        amount_usd: type === 'tk' ? priceTk / 15 : priceNaira / 1500, // proportional proxy
-        type: 'purchase_plugin',
-        description: `Purchased DSP Plugin: ${checkoutEffect.name}`
-      });
 
       // Add to store
       purchasePlugin(checkoutEffect.id);
