@@ -29,69 +29,25 @@ class AdMobProductionService {
   /**
    * Safe transaction-level update to increase user's TK balance by 0.1 on Supabase
    */
-  public async awardProductionTkReward(userId?: string) {
-    let resolvedUserId = userId;
-    
-    // Fallback: If no userId is supplied, resolve from Supabase current active session
-    if (!resolvedUserId) {
-      try {
-        const { data: { user } } = await supabase.auth.getUser();
-        if (user) {
-          resolvedUserId = user.id;
-        }
-      } catch (e) {
-        console.error("No active user session detected for rewarded ad callback:", e);
-      }
-    }
-
-    if (!resolvedUserId) {
-      console.warn("Unable to award TK reward: No logged-in user context available.");
-      return;
-    }
-
-    // Add immediate claim timestamp
-    this.addClaimTimestamp();
-
+  public async awardProductionTkReward(_userId?: string) {
+    // Server-side atomic RPC: enforces auth + 3/hour rate limit + wallet
+    // credit in a single transaction. Clients cannot bypass by clearing
+    // localStorage or invoking this method directly — the RPC uses
+    // auth.uid() and its own ad_reward_claims table for rate limiting.
     try {
-      // 1. Fetch current wallet details
-      const { data: walletData, error: walletError } = await supabase
-        .from('wallets')
-        .select('*')
-        .eq('user_id', resolvedUserId)
-        .single();
-
-      if (walletError || !walletData) {
-        console.error("Failed to query wallet for TK award:", walletError);
+      const { data, error } = await supabase.rpc('award_ad_reward');
+      if (error) {
+        console.error('[AdMob] award_ad_reward failed:', error.message);
         return;
       }
-
-      // 2. Increment TK balance by exactly 0.10 TK
-      const currentTk = Number(walletData.tk_balance || 0);
-      const newTk = parseFloat((currentTk + 0.1).toFixed(4));
-
-      // 3. Commit update back to production db
-      const { error: updateError } = await supabase
-        .from('wallets')
-        .update({ tk_balance: newTk })
-        .eq('user_id', resolvedUserId);
-
-      if (updateError) {
-        console.error("Failed to update wallet balance in Supabase:", updateError);
-        return;
+      if (data && (data as any).success) {
+        this.addClaimTimestamp(); // UI hint only; server is source of truth
+        console.log('[AdMob] TK reward credited via server RPC.');
+      } else {
+        console.warn('[AdMob] Reward rejected:', (data as any)?.reason);
       }
-
-      // 4. Log the income transaction as a 'revenue' type to ensure it shows up in history logs on the wallet page
-      await supabase.from('wallet_transactions').insert({
-        user_id: resolvedUserId,
-        amount_naira: 0,
-        amount_usd: 0,
-        type: 'revenue',
-        description: 'Watched Rewarded Ad (+0.10 TK)'
-      });
-
-      console.log(`[AdMob Production Service] User ${resolvedUserId} earned +0.10 TK. Balance updated: ${currentTk} -> ${newTk}`);
     } catch (err) {
-      console.error("Token reward hook threw exception:", err);
+      console.error('[AdMob] Reward RPC threw:', err);
     }
   }
 
