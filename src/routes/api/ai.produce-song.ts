@@ -23,6 +23,11 @@ export const Route = createFileRoute("/api/ai/produce-song")({
           const auth = await requireAuth(request);
           if (auth instanceof Response) return auth;
 
+          // Song generation is heavier; charge $1.00 per request.
+          const charge = await chargeAiForRequest(request, 1.0, "produce-song");
+          if (charge instanceof Response) return charge;
+
+
           const body = (await request.json()) as {
             description: string;
             durationSec?: number;
