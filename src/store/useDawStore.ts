@@ -848,11 +848,22 @@ export const useDawStore = create<DawState>()(
     };
   }),
 
-  addChatMessage: (message) => set((state) => ({
-    chatMessages: [...state.chatMessages, message]
-  })),
+  addChatMessage: (message) => set((state) => {
+    const next = [...state.chatMessages, message];
+    const key = state.currentProjectId || '__local__';
+    return {
+      chatMessages: next,
+      chatMessagesByProject: { ...state.chatMessagesByProject, [key]: next },
+    };
+  }),
 
-  clearChat: () => set({ chatMessages: [] })
+  clearChat: () => set((state) => {
+    const key = state.currentProjectId || '__local__';
+    return {
+      chatMessages: [],
+      chatMessagesByProject: { ...state.chatMessagesByProject, [key]: [] },
+    };
+  })
 }), {
   // zundo partialize: only diff musically meaningful state to avoid firing on
   // every UI tick (transport position, loading flags, etc. are excluded).
