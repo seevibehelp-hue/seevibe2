@@ -43,6 +43,7 @@ interface DawState {
   setInputMonitoring: (enabled: boolean) => void;
   
   chatMessages: { role: 'user' | 'assistant'; content: string }[];
+  chatMessagesByProject: Record<string, { role: 'user' | 'assistant'; content: string }[]>;
   
   // Actions
   setMidiDevices: (devices: { id: string; name: string }[]) => void;
