@@ -2365,6 +2365,42 @@ export type Database = {
           },
         ]
       }
+      withdrawals: {
+        Row: {
+          amount: number
+          created_at: string
+          details: Json
+          email: string
+          id: string
+          method: string
+          status: string | null
+          tx_hash: string | null
+          user_id: string
+        }
+        Insert: {
+          amount: number
+          created_at?: string
+          details: Json
+          email: string
+          id: string
+          method: string
+          status?: string | null
+          tx_hash?: string | null
+          user_id: string
+        }
+        Update: {
+          amount?: number
+          created_at?: string
+          details?: Json
+          email?: string
+          id?: string
+          method?: string
+          status?: string | null
+          tx_hash?: string | null
+          user_id?: string
+        }
+        Relationships: []
+      }
     }
     Views: {
       ai_providers_public: {
