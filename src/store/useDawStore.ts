@@ -258,6 +258,7 @@ export const useDawStore = create<DawState>()(
   markedClipIds: [],
   clipboardClips: null,
   chatMessages: [{ role: 'assistant', content: 'Hey! I\'m your AI production assistant. How can I help you with your project today?' }],
+  chatMessagesByProject: {},
   masterVolume: 0,
   setMasterVolume: (volume) => set({ masterVolume: volume }),
   purchasedPlugins: [],
