@@ -2,6 +2,7 @@ import { createFileRoute } from "@tanstack/react-router";
 import { generateText } from "ai";
 import { resolveModel } from "@/lib/ai-gateway.server";
 import { requireAuth, sanitizeUserText } from "@/lib/api-auth.server";
+import { chargeAiForRequest } from "@/lib/ai-billing.server";
 
 export const Route = createFileRoute("/api/ai/enhance-vocal")({
   server: {
@@ -10,6 +11,10 @@ export const Route = createFileRoute("/api/ai/enhance-vocal")({
         try {
           const auth = await requireAuth(request);
           if (auth instanceof Response) return auth;
+
+          // Server-side billing: user cannot bypass by hitting endpoint directly.
+          const charge = await chargeAiForRequest(request, 0.2, "enhance-vocal");
+          if (charge instanceof Response) return charge;
 
           const { description, providerId } = (await request.json()) as {
             description?: string;

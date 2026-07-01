@@ -544,24 +544,16 @@ export function FXRack() {
 
       // Verify Purchaser's Wallet funds
       if (currencyType === 'naira') {
-        if (Number(userWallet.balance_naira) < priceNaira) {
-          alert(`Insufficient Naira balance. You need ₦${priceNaira.toLocaleString()}, but your balance is ₦${Number(userWallet.balance_naira).toLocaleString()}.`);
+        const { data: res, error: spendErr } = await supabase.rpc('spend_wallet_naira', {
+          p_amount: priceNaira,
+          p_reason: 'purchase_plugin',
+          p_description: `Purchased DSP Plugin: ${checkoutEffect.name}`,
+        });
+        if (spendErr || !(res as any)?.success) {
+          alert(spendErr?.message || `Insufficient Naira. Need ₦${priceNaira.toLocaleString()}.`);
           setCheckingOutEffect(false);
           return;
         }
-
-        // Deduct Naira
-        const newNaira = Number(userWallet.balance_naira) - priceNaira;
-        await supabase.from('wallets').update({ balance_naira: newNaira }).eq('user_id', user.id);
-        
-        // Write purchaser transaction log
-        await supabase.from('wallet_transactions').insert({
-          user_id: user.id,
-          amount_naira: priceNaira,
-          amount_usd: 0.10,
-          type: 'purchase_plugin',
-          description: `Purchased DSP Plugin: ${checkoutEffect.name}`
-        });
 
       } else {
         if (Number(userWallet.tk_balance) < priceTk) {
@@ -697,24 +689,16 @@ export function FXRack() {
 
       // Verify Purchaser's Wallet funds
       if (currencyType === 'naira') {
-        if (Number(userWallet.balance_naira) < totalNaira) {
-          alert(`Insufficient Naira balance. You need ₦${totalNaira.toLocaleString()}, but your balance is ₦${Number(userWallet.balance_naira).toLocaleString()}.`);
+        const { data: res, error: spendErr } = await supabase.rpc('spend_wallet_naira', {
+          p_amount: totalNaira,
+          p_reason: 'purchase_plugin',
+          p_description: `Purchased Preset Unlock: ${checkoutPreset.name} (${count} Premium Effects)`,
+        });
+        if (spendErr || !(res as any)?.success) {
+          alert(spendErr?.message || `Insufficient Naira. Need ₦${totalNaira.toLocaleString()}.`);
           setCheckingOut(false);
           return;
         }
-
-        // Deduct Naira
-        const newNaira = Number(userWallet.balance_naira) - totalNaira;
-        await supabase.from('wallets').update({ balance_naira: newNaira }).eq('user_id', user.id);
-        
-        // Write purchaser transaction log
-        await supabase.from('wallet_transactions').insert({
-          user_id: user.id,
-          amount_naira: totalNaira,
-          amount_usd: count * 0.10,
-          type: 'purchase_plugin',
-          description: `Purchased Preset Unlock: ${checkoutPreset.name} (${count} Premium Effects)`
-        });
 
       } else {
         if (Number(userWallet.tk_balance) < totalTk) {

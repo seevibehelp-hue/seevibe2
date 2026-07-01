@@ -103,120 +103,56 @@ export function Wallet() {
 
     try {
       if (user) {
-        // Fetch current real-time wallet from Supabase
+        // Fetch current wallet
         const { data: currentWallet, error: fetchErr } = await supabase
-          .from('wallets')
-          .select('*')
-          .eq('user_id', user.id)
-          .single();
-
+          .from('wallets').select('*').eq('user_id', user.id).single();
         if (fetchErr || !currentWallet) {
-          alert("Error fetching wallet data: " + (fetchErr?.message || "Wallet not found"));
+          alert('Error fetching wallet: ' + (fetchErr?.message || 'not found'));
           setIsProcessing(false);
           return;
         }
-
         let currentNaira = Number(currentWallet.balance_naira || 0);
-        let currentUsd = Number(currentWallet.balance_usd || 0);
 
+        // If insufficient, try the once-in-a-lifetime demo grant (server-enforced).
         if (currentNaira < cost) {
-          const grantKey = `premium_demo_grant_claimed_${user.id}`;
-          const alreadyClaimed = localStorage.getItem(grantKey) === 'true';
-
-          if (alreadyClaimed) {
-            alert(`Insufficient balance. You currently have ₦${currentNaira.toLocaleString()}, but you need ₦${cost.toLocaleString()} to upgrade.\n\nYou have already claimed your once-in-a-lifetime free ₦1,000 Demo Producer Grant. Please fund your wallet to proceed.`);
-            setIsProcessing(false);
-            return;
-          }
-
-          // Automatically inject free demo grant
-          currentNaira += 1000;
-          currentUsd += 0.60;
-          localStorage.setItem(grantKey, 'true');
-          
-          // Log the grant injection transaction
-          await supabase.from('wallet_transactions').insert({
-            user_id: user.id,
-            amount_naira: 1000,
-            amount_usd: 0.60,
-            type: 'revenue',
-            description: "Instantly Claimed: Once-in-a-lifetime ₦1,000 Demo Grant"
-          });
-          
-          const { error: grantErr } = await supabase
-            .from('wallets')
-            .update({
-              balance_naira: currentNaira,
-              balance_usd: currentUsd
-            })
-            .eq('user_id', user.id);
-
+          const { data: grantRes, error: grantErr } = await supabase.rpc('claim_demo_grant');
           if (grantErr) {
-            alert("Error applying grant: " + grantErr.message);
+            alert('Grant failed: ' + grantErr.message);
             setIsProcessing(false);
             return;
           }
+          if (!(grantRes as any)?.success) {
+            alert(`Insufficient balance. You have ₦${currentNaira.toLocaleString()}, need ₦${cost.toLocaleString()}. Your one-time demo grant has already been claimed.`);
+            setIsProcessing(false);
+            return;
+          }
+          currentNaira += 1000;
         }
 
-        const nextNaira = currentNaira - cost;
-        const nextUsd = currentUsd - usdCost;
-
-        // Perform balance deduction
-        const { error: updErr } = await supabase
-          .from('wallets')
-          .update({
-            balance_naira: nextNaira,
-            balance_usd: nextUsd
-          })
-          .eq('user_id', user.id);
-
-        if (updErr) {
-          alert("Error updating wallet balance: " + updErr.message);
+        // Atomic server-side deduction
+        const { data: spendRes, error: spendErr } = await supabase.rpc('spend_wallet_naira', {
+          p_amount: cost,
+          p_reason: 'sub_charge',
+          p_description: `Go Ads-Free Premium Upgrade: ${days}-Day pass`,
+          p_meta: { days, ads_free_until: untilStr },
+        });
+        if (spendErr || !(spendRes as any)?.success) {
+          alert('Payment failed: ' + (spendErr?.message || (spendRes as any)?.reason || 'unknown'));
           setIsProcessing(false);
           return;
         }
 
-        // Try to update DB premium flags if they exist, caught gracefully
-        try {
-          await supabase
-            .from('wallets')
-            .update({
-              ads_free_until: untilStr,
-              is_ads_free: true
-            })
-            .eq('user_id', user.id);
-        } catch (colErr) {
-          console.warn("DB ads_free attributes skip-warn:", colErr);
-        }
+        // Refresh wallet + transactions
+        const { data: refreshedWallet } = await supabase
+          .from('wallets').select('*').eq('user_id', user.id).single();
+        if (refreshedWallet) setWallet({ ...refreshedWallet, is_ads_free: true, ads_free_until: untilStr });
 
-        // Insert real audit transaction log
-        await supabase.from('wallet_transactions').insert({
-          user_id: user.id,
-          amount_naira: cost,
-          amount_usd: usdCost,
-          type: 'sub_charge',
-          description: `Go Ads-Free Premium Upgrade: ${days}-Day autonomy pass`
-        });
-
-        // Set state to update screen immediately
-        setWallet((prev: any) => ({
-          ...prev,
-          balance_naira: nextNaira,
-          balance_usd: nextUsd,
-          is_ads_free: true,
-          ads_free_until: untilStr
-        }));
-
-        // Fetch refreshed transaction list
         const { data: refreshedTx } = await supabase
-          .from('wallet_transactions')
-          .select('*')
-          .eq('user_id', user.id)
-          .order('created_at', { ascending: false })
-          .limit(20);
+          .from('wallet_transactions').select('*').eq('user_id', user.id)
+          .order('created_at', { ascending: false }).limit(20);
         if (refreshedTx) setTransactions(refreshedTx);
-
       } else {
+
         // Fallback dynamic transaction execution for guest locally!
         let currentNaira = wallet ? Number(wallet.balance_naira) : 16000;
         let currentUsd = wallet ? Number(wallet.balance_usd) : 10.00;
@@ -471,11 +407,12 @@ export function Wallet() {
       {/* Checkout Plan Confirmation Modal */}
       {checkoutPlan && (() => {
         const walletNaira = wallet ? Number(wallet.balance_naira) : 0;
-        const grantKey = user ? `premium_demo_grant_claimed_${user.id}` : 'premium_demo_grant_claimed_guest';
-        const alreadyClaimed = localStorage.getItem(grantKey) === 'true';
+        // The demo-grant eligibility flag is now server-tracked (profiles.demo_grant_claimed).
+        // We display the CTA optimistically; the RPC is the source of truth.
         const hasShortfall = walletNaira < checkoutPlan.cost;
         const shortfall = checkoutPlan.cost - walletNaira;
-        const eligibleForGrant = hasShortfall && !alreadyClaimed;
+        const eligibleForGrant = hasShortfall;
+
         
         return (
           <div className="fixed inset-0 bg-black/85 backdrop-blur-md z-50 flex items-center justify-center p-4 animate-in fade-in duration-200">

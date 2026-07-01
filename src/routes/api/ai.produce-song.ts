@@ -2,6 +2,7 @@ import { createFileRoute } from "@tanstack/react-router";
 import { generateText } from "ai";
 import { resolveModel } from "@/lib/ai-gateway.server";
 import { requireAuth, sanitizeUserText } from "@/lib/api-auth.server";
+import { chargeAiForRequest } from "@/lib/ai-billing.server";
 
 /**
  * POST /api/ai/produce-song
@@ -21,6 +22,11 @@ export const Route = createFileRoute("/api/ai/produce-song")({
         try {
           const auth = await requireAuth(request);
           if (auth instanceof Response) return auth;
+
+          // Song generation is heavier; charge $1.00 per request.
+          const charge = await chargeAiForRequest(request, 1.0, "produce-song");
+          if (charge instanceof Response) return charge;
+
 
           const body = (await request.json()) as {
             description: string;
