@@ -372,52 +372,25 @@ export function ChatView() {
       alert("Please sign in to continue AI compute. Each step costs $0.20.");
       return false;
     }
-
-    const { data: currentWallet, error: fetchErr } = await supabase
-      .from("wallets")
-      .select("*")
-      .eq("user_id", user.id)
-      .single();
-
-    if (fetchErr || !currentWallet) {
-      alert("Couldn't load your wallet. Please open the Wallet page and retry.");
-      return false;
-    }
-
-    const currentUsd = Number(currentWallet.balance_usd || 0);
-    const currentNaira = Number(currentWallet.balance_naira || 0);
-
-    if (currentUsd < 0.2) {
-      alert(
-        `Insufficient funds: $${currentUsd.toFixed(2)} available, $0.20 required. Please fund your wallet.`,
-      );
-      return false;
-    }
-
-    const updatedUsd = currentUsd - 0.2;
-    const updatedNaira = currentNaira - 320;
-
-    const { error: updErr } = await supabase
-      .from("wallets")
-      .update({ balance_usd: updatedUsd, balance_naira: updatedNaira })
-      .eq("user_id", user.id);
-
-    if (updErr) {
-      alert("Wallet deduction failed: " + updErr.message);
-      return false;
-    }
-
-    await supabase.from("wallet_transactions").insert({
-      user_id: user.id,
-      amount_naira: 320,
-      amount_usd: 0.2,
-      type: "ai_assistant",
-      description: `AI Assist Continuation computation charge`,
+    const { data: res, error } = await supabase.rpc('spend_wallet_naira', {
+      p_amount: 320,
+      p_reason: 'ai_assistant',
+      p_description: 'AI Assist Continuation compute charge',
     });
-
-    setWallet({ balance_usd: updatedUsd, balance_naira: updatedNaira });
+    if (error) {
+      alert('Wallet deduction failed: ' + error.message);
+      return false;
+    }
+    if (!(res as any)?.success) {
+      alert(`Insufficient funds. Balance: ₦${(res as any)?.balance_naira ?? 0}, required: ₦320.`);
+      return false;
+    }
+    // Refresh
+    const { data: refreshed } = await supabase.from('wallets').select('*').eq('user_id', user.id).single();
+    if (refreshed) setWallet({ balance_usd: Number(refreshed.balance_usd), balance_naira: Number(refreshed.balance_naira) });
     return true;
   };
+
 
   // Requirement 7: AI Permission Layer & Guardrails
   const [permissions, setPermissions] = useState({
