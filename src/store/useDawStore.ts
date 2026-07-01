@@ -387,7 +387,24 @@ export const useDawStore = create<DawState>()(
   setIsRecording: (recording, start16ths = null) => set({ isRecording: recording, recordingStart16ths: start16ths }),
   setRecordingCountdown: (count) => set({ recordingCountdown: count }),
   setIsTrackListOpen: (open) => set({ isTrackListOpen: open }),
-  setCurrentProject: (id, name) => set({ currentProjectId: id, currentProjectName: name }),
+  setCurrentProject: (id, name) => set((state) => {
+    // Per-project chat isolation: stash the outgoing project's chat, then
+    // swap in the incoming project's chat (fresh greeting if none exists).
+    const GREETING = { role: 'assistant' as const, content: "Hey! I'm your AI production assistant. How can I help you with your project today?" };
+    const oldKey = state.currentProjectId || '__local__';
+    const newKey = id || '__local__';
+    if (oldKey === newKey) {
+      return { currentProjectId: id, currentProjectName: name };
+    }
+    const buckets = { ...state.chatMessagesByProject, [oldKey]: state.chatMessages };
+    const incoming = buckets[newKey] && buckets[newKey].length > 0 ? buckets[newKey] : [GREETING];
+    return {
+      currentProjectId: id,
+      currentProjectName: name,
+      chatMessagesByProject: buckets,
+      chatMessages: incoming,
+    };
+  }),
 
   setMidiDevices: (devices) => set({ midiDevices: devices }),
   setAudioInputs: (inputs) => set({ audioInputs: inputs }),
