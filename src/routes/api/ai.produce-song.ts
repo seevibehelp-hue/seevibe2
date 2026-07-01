@@ -2,6 +2,7 @@ import { createFileRoute } from "@tanstack/react-router";
 import { generateText } from "ai";
 import { resolveModel } from "@/lib/ai-gateway.server";
 import { requireAuth, sanitizeUserText } from "@/lib/api-auth.server";
+import { chargeAiForRequest } from "@/lib/ai-billing.server";
 
 /**
  * POST /api/ai/produce-song
