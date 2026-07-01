@@ -47,6 +47,7 @@ export function FloatingAIOrientedBall() {
 
   const dragStartRef = useRef({ x: 0, y: 0 });
   const positionStartRef = useRef({ x: 0, y: 0 });
+  const didDragRef = useRef(false);
   const scrollRef = useRef<HTMLDivElement>(null);
   const logsScrollRef = useRef<HTMLDivElement>(null);
 
