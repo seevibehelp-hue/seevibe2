@@ -41,6 +41,11 @@ export const Route = createFileRoute("/api/ai/chat")({
           const auth = await requireAuth(request);
           if (auth instanceof Response) return auth;
 
+          // Server-side billing: user cannot bypass by hitting endpoint directly.
+          const charge = await chargeAiForRequest(request, 0.2, "chat");
+          if (charge instanceof Response) return charge;
+
+
           const body = (await request.json()) as {
             messages?: any[];
             systemInstruction?: string;
