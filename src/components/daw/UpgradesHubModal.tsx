@@ -153,26 +153,39 @@ export function UpgradesHubModal({ isOpen, onClose }: UpgradePanelProps) {
     setPurchasingId(phase.id);
     try {
       if (user?.id) {
-        // Authenticated Supabase flow
-        const updates: any = {};
+        // Authenticated: atomic server-side deduction via SECURITY DEFINER RPC.
+        // The wallets table no longer accepts client-side balance UPDATEs.
         if (method === 'naira') {
-          updates.balance_naira = Number(wallet.balance_naira) - cost;
+          const { data: res, error } = await supabase.rpc('spend_wallet_naira', {
+            p_amount: cost,
+            p_reason: 'sub_charge',
+            p_description: `Studio Upgrade Unlock: ${phase.title} (NAIRA)`,
+            p_meta: { phase_id: phase.id },
+          });
+          if (error) throw error;
+          if (!(res as any)?.success) {
+            alert(`Payment failed: ${(res as any)?.reason || 'unknown'}`);
+            setPurchasingId(null);
+            return;
+          }
         } else {
-          updates.tk_balance = Number(wallet.tk_balance) - cost;
+          // TK spend: not yet server-atomized. Keep client update but note
+          // the DB no longer allows it — TK purchases will surface an error
+          // until a spend_wallet_tk RPC is added.
+          const { error: updErr } = await supabase.from('wallets')
+            .update({ tk_balance: Number(wallet.tk_balance) - cost })
+            .eq('user_id', user.id);
+          if (updErr) {
+            alert('TK spend blocked by server policy. Please try Naira instead.');
+            setPurchasingId(null);
+            return;
+          }
+          await supabase.from('wallet_transactions').insert({
+            user_id: user.id, amount_naira: 0, amount_usd: 0,
+            type: 'sub_charge',
+            description: `Studio Upgrade Unlock: ${phase.title} (TK)`,
+          });
         }
-
-        const { error: updErr } = await supabase.from('wallets').update(updates).eq('user_id', user.id);
-        if (updErr) throw updErr;
-
-        // Save transaction log (audit)
-        await supabase.from('wallet_transactions').insert({
-          user_id: user.id,
-          amount_naira: method === 'naira' ? cost : 0,
-          amount_usd: method === 'naira' ? (cost * 0.000625) : 0,
-          type: 'sub_charge',
-          description: `Studio Upgrade Unlock: ${phase.title} (${method.toUpperCase()})`
-        });
-      } else {
         // Guest LocalStorage fallback
         if (method === 'naira') {
           const nextNaira = Number(wallet.balance_naira) - cost;
