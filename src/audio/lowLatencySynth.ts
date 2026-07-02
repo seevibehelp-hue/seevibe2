@@ -1,31 +1,42 @@
 // @ts-nocheck
 import * as Tone from 'tone';
 
+// Standard production drum-kit note map. Covers General-MIDI style drum
+// octaves (C1-B2) used by the AI producer as well as the pad-preview
+// octaves (C4-D6). Note-names that don't hit a specific kit piece fall
+// back to 'perc' (a short shaker/tick) inside renderReferenceDrumAt.
 const DRUM_NOTE_TO_TYPE: Record<string, string> = {
-  C4: 'kick',
-  'C#4': 'kick',
-  D4: 'snare',
-  'D#4': 'snare',
+  // General-MIDI drum range (AI producer + drum-track MIDI clips)
+  C1: 'kick',   'C#1': 'kick',
+  D1: 'snare',  'D#1': 'clap',
+  E1: 'snare',
+  F1: 'hi-hat', 'F#1': 'hi-hat',
+  G1: 'open hh','G#1': 'open hh',
+  A1: 'crash',  'A#1': 'crash',
+  B1: 'tom',
+  C2: 'tom hi', 'C#2': 'rim',
+  D2: 'perc',   'D#2': 'perc',
+  E2: 'perc',   F2: 'perc',
+  // Pad-preview octaves (DrumPads.tsx)
+  C4: 'kick',   'C#4': 'kick',
+  D4: 'snare',  'D#4': 'snare',
   E4: 'clap',
-  F4: 'hi-hat',
-  'F#4': 'hi-hat',
-  G4: 'open hh',
-  'G#4': 'open hh',
-  A4: 'crash',
-  'A#4': 'crash',
+  F4: 'hi-hat', 'F#4': 'hi-hat',
+  G4: 'open hh','G#4': 'open hh',
+  A4: 'crash',  'A#4': 'crash',
   B4: 'tom',
-  C5: 'tom hi',
-  D5: 'rim',
-  E5: 'perc',
-  F5: 'perc',
-  G5: 'vox',
-  A5: 'vox',
+  C5: 'tom hi', D5: 'rim',
+  E5: 'perc',   F5: 'perc',
+  G5: 'vox',    A5: 'vox',
   B5: 'fx',
-  C6: 'kick',
-  D6: 'snare',
+  C6: 'kick',   D6: 'snare',
 };
 
-const referenceMasterGain = 0.85;
+// Bumped from 0.85 → 1.15. Kit-piece gains below were also raised so that
+// the pad audition and MIDI-drum playback match the loudness of the piano
+// keyboard and pro drum-pad expectations. Downstream hard limiter catches
+// any inter-voice clipping.
+const referenceMasterGain = 1.15;
 
 const activeVoices = new Map<string, { osc1: OscillatorNode; osc2?: OscillatorNode; env: GainNode }>();
 
@@ -250,26 +261,26 @@ export const renderReferenceDrumAt = (
   if (drumType === 'kick' || drumType === 'boom') {
     const body = ctx.createOscillator(); const bg = ctx.createGain();
     body.type = 'sine';
-    body.frequency.setValueAtTime(160, now);
-    body.frequency.exponentialRampToValueAtTime(35, now + 0.08);
-    bg.gain.setValueAtTime(0.34 * vel, now);
-    bg.gain.exponentialRampToValueAtTime(0.001, now + 0.45);
-    body.connect(bg); bg.connect(destination); body.start(now); body.stop(now + 0.45);
+    body.frequency.setValueAtTime(180, now);
+    body.frequency.exponentialRampToValueAtTime(38, now + 0.09);
+    bg.gain.setValueAtTime(0.62 * vel, now);
+    bg.gain.exponentialRampToValueAtTime(0.001, now + 0.5);
+    body.connect(bg); bg.connect(destination); body.start(now); body.stop(now + 0.5);
 
     const click = ctx.createOscillator(); const cg = ctx.createGain();
     click.type = 'triangle';
-    click.frequency.setValueAtTime(4500, now);
-    click.frequency.exponentialRampToValueAtTime(200, now + 0.015);
-    cg.gain.setValueAtTime(0.12 * vel, now);
-    cg.gain.exponentialRampToValueAtTime(0.001, now + 0.02);
-    click.connect(cg); cg.connect(destination); click.start(now); click.stop(now + 0.03);
+    click.frequency.setValueAtTime(5200, now);
+    click.frequency.exponentialRampToValueAtTime(220, now + 0.015);
+    cg.gain.setValueAtTime(0.28 * vel, now);
+    cg.gain.exponentialRampToValueAtTime(0.001, now + 0.025);
+    click.connect(cg); cg.connect(destination); click.start(now); click.stop(now + 0.035);
 
     const sub = ctx.createOscillator(); const sg = ctx.createGain();
     sub.type = 'sine';
-    sub.frequency.setValueAtTime(50, now);
-    sg.gain.setValueAtTime(0.2 * vel, now);
-    sg.gain.exponentialRampToValueAtTime(0.001, now + 0.35);
-    sub.connect(sg); sg.connect(destination); sub.start(now); sub.stop(now + 0.35);
+    sub.frequency.setValueAtTime(52, now);
+    sg.gain.setValueAtTime(0.38 * vel, now);
+    sg.gain.exponentialRampToValueAtTime(0.001, now + 0.4);
+    sub.connect(sg); sg.connect(destination); sub.start(now); sub.stop(now + 0.4);
   } else if (drumType === '808' || drumType === 'sub' || drumType === '808 sub') {
     const osc = ctx.createOscillator(); const gain = ctx.createGain();
     const dist = ctx.createWaveShaper();
@@ -282,57 +293,71 @@ export const renderReferenceDrumAt = (
     osc.type = 'sine';
     osc.frequency.setValueAtTime(90, now);
     osc.frequency.exponentialRampToValueAtTime(40, now + 0.15);
-    gain.gain.setValueAtTime(0.5 * vel, now);
+    gain.gain.setValueAtTime(0.75 * vel, now);
     gain.gain.exponentialRampToValueAtTime(0.001, now + 1.2);
     osc.connect(dist); dist.connect(gain); gain.connect(destination);
     osc.start(now); osc.stop(now + 1.2);
   } else if (drumType === 'snare') {
     const body = ctx.createOscillator(); const bg = ctx.createGain();
     body.type = 'triangle';
-    body.frequency.setValueAtTime(250, now);
-    body.frequency.exponentialRampToValueAtTime(120, now + 0.05);
-    bg.gain.setValueAtTime(0.22 * vel, now);
-    bg.gain.exponentialRampToValueAtTime(0.001, now + 0.12);
-    body.connect(bg); bg.connect(destination); body.start(now); body.stop(now + 0.12);
+    body.frequency.setValueAtTime(260, now);
+    body.frequency.exponentialRampToValueAtTime(130, now + 0.05);
+    bg.gain.setValueAtTime(0.42 * vel, now);
+    bg.gain.exponentialRampToValueAtTime(0.001, now + 0.13);
+    body.connect(bg); bg.connect(destination); body.start(now); body.stop(now + 0.13);
 
     const noise = ctx.createBufferSource(); noise.buffer = noiseBuf(0.2, 2.5);
     const ng = ctx.createGain();
-    ng.gain.setValueAtTime(0.16 * vel, now);
-    ng.gain.exponentialRampToValueAtTime(0.001, now + 0.18);
-    const hp = ctx.createBiquadFilter(); hp.type = 'highpass'; hp.frequency.value = 2500;
-    const lp = ctx.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = 8000;
-    noise.connect(hp); hp.connect(lp); lp.connect(ng); ng.connect(destination); noise.start(now); noise.stop(now + 0.2);
+    ng.gain.setValueAtTime(0.34 * vel, now);
+    ng.gain.exponentialRampToValueAtTime(0.001, now + 0.2);
+    const hp = ctx.createBiquadFilter(); hp.type = 'highpass'; hp.frequency.value = 2200;
+    const lp = ctx.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = 9000;
+    noise.connect(hp); hp.connect(lp); lp.connect(ng); ng.connect(destination); noise.start(now); noise.stop(now + 0.22);
+
+    // Crisp transient tick for production-grade attack
+    const tick = ctx.createOscillator(); const tg = ctx.createGain();
+    tick.type = 'square'; tick.frequency.setValueAtTime(1800, now);
+    tg.gain.setValueAtTime(0.14 * vel, now);
+    tg.gain.exponentialRampToValueAtTime(0.001, now + 0.01);
+    tick.connect(tg); tg.connect(destination); tick.start(now); tick.stop(now + 0.012);
   } else if (drumType === 'clap') {
     for (let layer = 0; layer < 4; layer++) {
       const delay = layer * 0.008;
       const noise = ctx.createBufferSource(); noise.buffer = noiseBuf(0.15, 3.5);
       const gain = ctx.createGain();
-      gain.gain.setValueAtTime(0.11 * vel, now + delay);
-      gain.gain.exponentialRampToValueAtTime(0.001, now + delay + 0.12);
+      gain.gain.setValueAtTime(0.22 * vel, now + delay);
+      gain.gain.exponentialRampToValueAtTime(0.001, now + delay + 0.13);
       const bp = ctx.createBiquadFilter(); bp.type = 'bandpass';
       bp.frequency.value = 1500; bp.Q.value = 1.5;
       noise.connect(bp); bp.connect(gain); gain.connect(destination); noise.start(now + delay); noise.stop(now + delay + 0.15);
     }
   } else if (drumType === 'hi-hat' || drumType === 'closed hh' || drumType === 'hat') {
-    const noise = ctx.createBufferSource(); noise.buffer = noiseBuf(0.04, 10);
+    const noise = ctx.createBufferSource(); noise.buffer = noiseBuf(0.05, 10);
     const gain = ctx.createGain();
-    gain.gain.setValueAtTime(0.08 * vel, now);
-    gain.gain.exponentialRampToValueAtTime(0.001, now + 0.035);
-    const hp = ctx.createBiquadFilter(); hp.type = 'highpass'; hp.frequency.value = 8000;
-    noise.connect(hp); hp.connect(gain); gain.connect(destination); noise.start(now); noise.stop(now + 0.06);
+    gain.gain.setValueAtTime(0.22 * vel, now);
+    gain.gain.exponentialRampToValueAtTime(0.001, now + 0.04);
+    const hp = ctx.createBiquadFilter(); hp.type = 'highpass'; hp.frequency.value = 7500;
+    // Metallic ring layer for standard 808/909-style hats
+    const ring = ctx.createOscillator(); const rg = ctx.createGain();
+    ring.type = 'square'; ring.frequency.setValueAtTime(9200, now);
+    rg.gain.setValueAtTime(0.06 * vel, now);
+    rg.gain.exponentialRampToValueAtTime(0.001, now + 0.035);
+    ring.connect(rg); rg.connect(destination);
+    ring.start(now); ring.stop(now + 0.04);
+    noise.connect(hp); hp.connect(gain); gain.connect(destination); noise.start(now); noise.stop(now + 0.07);
   } else if (drumType === 'open hh' || drumType === 'open hat') {
     const noise = ctx.createBufferSource(); noise.buffer = noiseBuf(0.3, 1.5);
     const gain = ctx.createGain();
-    gain.gain.setValueAtTime(0.08 * vel, now);
-    gain.gain.exponentialRampToValueAtTime(0.001, now + 0.25);
-    const hp = ctx.createBiquadFilter(); hp.type = 'highpass'; hp.frequency.value = 7000;
+    gain.gain.setValueAtTime(0.2 * vel, now);
+    gain.gain.exponentialRampToValueAtTime(0.001, now + 0.28);
+    const hp = ctx.createBiquadFilter(); hp.type = 'highpass'; hp.frequency.value = 6500;
     noise.connect(hp); hp.connect(gain); gain.connect(destination); noise.start(now); noise.stop(now + 0.35);
   } else if (drumType === 'crash') {
     const noise = ctx.createBufferSource(); noise.buffer = noiseBuf(1.5, 1.2);
     const gain = ctx.createGain();
-    gain.gain.setValueAtTime(0.08 * vel, now);
+    gain.gain.setValueAtTime(0.22 * vel, now);
     gain.gain.exponentialRampToValueAtTime(0.001, now + 1.3);
-    const hp = ctx.createBiquadFilter(); hp.type = 'highpass'; hp.frequency.value = 5000;
+    const hp = ctx.createBiquadFilter(); hp.type = 'highpass'; hp.frequency.value = 4500;
     noise.connect(hp); hp.connect(gain); gain.connect(destination); noise.start(now); noise.stop(now + 1.5);
   } else if (drumType === 'rim' || drumType === 'rimshot' || drumType === 'cowbell') {
     const osc1 = ctx.createOscillator();
@@ -349,7 +374,7 @@ export const renderReferenceDrumAt = (
     filter.Q.setValueAtTime(2.2, now);
 
     gainNode.gain.setValueAtTime(0, now);
-    gainNode.gain.linearRampToValueAtTime(0.09 * vel, now + 0.002);
+    gainNode.gain.linearRampToValueAtTime(0.22 * vel, now + 0.002);
     gainNode.gain.exponentialRampToValueAtTime(0.001, now + 0.22);
 
     osc1.connect(filter); osc2.connect(filter); filter.connect(gainNode); gainNode.connect(destination);
@@ -360,15 +385,16 @@ export const renderReferenceDrumAt = (
     osc.type = 'sine';
     osc.frequency.setValueAtTime(freq * 1.8, now);
     osc.frequency.exponentialRampToValueAtTime(freq, now + 0.06);
-    gain.gain.setValueAtTime(0.22 * vel, now);
+    gain.gain.setValueAtTime(0.38 * vel, now);
     gain.gain.exponentialRampToValueAtTime(0.001, now + 0.35);
     osc.connect(gain); gain.connect(destination); osc.start(now); osc.stop(now + 0.35);
   } else {
-    const noise = ctx.createBufferSource(); noise.buffer = noiseBuf(0.1, 5);
+    // 'perc' fallback — shaker/tick used by AI shakers and unmapped notes
+    const noise = ctx.createBufferSource(); noise.buffer = noiseBuf(0.08, 6);
     const gain = ctx.createGain();
-    gain.gain.setValueAtTime(0.12 * vel, now);
-    gain.gain.exponentialRampToValueAtTime(0.001, now + 0.1);
-    const hp = ctx.createBiquadFilter(); hp.type = 'highpass'; hp.frequency.value = 4000;
+    gain.gain.setValueAtTime(0.22 * vel, now);
+    gain.gain.exponentialRampToValueAtTime(0.001, now + 0.08);
+    const hp = ctx.createBiquadFilter(); hp.type = 'highpass'; hp.frequency.value = 5000;
     noise.connect(hp); hp.connect(gain); gain.connect(destination); noise.start(now); noise.stop(now + 0.1);
   }
 };
