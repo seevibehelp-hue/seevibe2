@@ -3657,12 +3657,13 @@ export function ChatView() {
               <Trash2 size={16} />
             </button>
 
-            {/* Minimize Floating Chat Button */}
+            {/* Minimize Floating Chat Button — always enabled so the user can
+                collapse the assistant back to the floating ball and view the
+                main studio session, even while an AI computation is running. */}
             <button
-              disabled={isLoading}
               onClick={() => setIsChatOpen(false)}
-              className={`p-2 text-gray-400 hover:text-[#00FF5A] transition-colors bg-[#1A1A1A]/50 hover:bg-[#1A1A1A] rounded-xl border border-white/5 flex items-center justify-center ${isLoading ? "opacity-30 cursor-not-allowed text-gray-600" : "animate-pulse"}`}
-              title={isLoading ? "Computation running..." : "Minimize Assistant"}
+              className={`p-2 text-gray-400 hover:text-[#00FF5A] transition-colors bg-[#1A1A1A]/50 hover:bg-[#1A1A1A] rounded-xl border border-white/5 flex items-center justify-center ${isLoading ? "animate-pulse" : ""}`}
+              title={isLoading ? "Minimize (AI keeps running in background)" : "Minimize Assistant"}
             >
               <ChevronDown size={16} />
             </button>
