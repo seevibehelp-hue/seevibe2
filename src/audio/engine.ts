@@ -2558,7 +2558,30 @@ class AudioEngine {
             p.loopEnd = Math.max(0.01, loopEndTime);
           }
 
-          p.sync().start(clip.startTime * Tone.Time("16n").toSeconds(), offsetTime, durationTime);
+          const clipStartSec = clip.startTime * Tone.Time("16n").toSeconds();
+          const transportRunning = Tone.Transport.state === "started";
+          const transportSec = transportRunning ? Tone.Transport.seconds : -1;
+
+          // If Transport has already moved past clip.startTime (buffer finished
+          // decoding late — common for a freshly recorded blob URL), the
+          // normal `.sync().start(clipStartSec)` schedules a time in the past
+          // and the player never fires. Play the remainder mid-clip instead.
+          if (transportRunning && transportSec > clipStartSec + 0.02) {
+            const elapsed = transportSec - clipStartSec;
+            const remaining = durationTime - elapsed;
+            if (remaining > 0.05) {
+              const midOffset = offsetTime + elapsed * (p.playbackRate || 1);
+              if (!p.buffer || !p.buffer.loaded || midOffset < p.buffer.duration - 0.02) {
+                try {
+                  p.start(Tone.now() + 0.02, midOffset, remaining);
+                } catch (_) {}
+              }
+            }
+            // Also arm sync for the NEXT loop pass so it plays from the top.
+            p.sync().start(clipStartSec, offsetTime, durationTime);
+          } else {
+            p.sync().start(clipStartSec, offsetTime, durationTime);
+          }
         };
 
         let targetUrl = clip.audioUrl;
