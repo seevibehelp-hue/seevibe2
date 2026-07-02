@@ -508,6 +508,24 @@ class AudioEngine {
   }
   private audioBufferCache: Map<string, Tone.ToneAudioBuffer> = new Map();
 
+  /**
+   * Preload an audio URL into the buffer cache so the next Tone.Player
+   * created for it uses the decoded buffer synchronously. Critical for
+   * freshly-recorded clips: without this, Player creation is async and
+   * `.sync().start(startTime)` can be scheduled for a Transport time that
+   * has already passed by the time the buffer finishes decoding, leaving
+   * the recorded clip completely silent on playback.
+   */
+  public async preloadAudioBuffer(url: string): Promise<void> {
+    if (!url || this.audioBufferCache.has(url)) return;
+    try {
+      const buf = await new Tone.ToneAudioBuffer().load(url);
+      this.audioBufferCache.set(url, buf);
+    } catch (e) {
+      console.warn("[audioEngine] preloadAudioBuffer failed for", url, e);
+    }
+  }
+
   public vocalPipeline: VocalPipeline | null = null;
   public micNode: Tone.UserMedia | any = null;
   public micStream: MediaStream | null = null;
@@ -2540,7 +2558,30 @@ class AudioEngine {
             p.loopEnd = Math.max(0.01, loopEndTime);
           }
 
-          p.sync().start(clip.startTime * Tone.Time("16n").toSeconds(), offsetTime, durationTime);
+          const clipStartSec = clip.startTime * Tone.Time("16n").toSeconds();
+          const transportRunning = Tone.Transport.state === "started";
+          const transportSec = transportRunning ? Tone.Transport.seconds : -1;
+
+          // If Transport has already moved past clip.startTime (buffer finished
+          // decoding late — common for a freshly recorded blob URL), the
+          // normal `.sync().start(clipStartSec)` schedules a time in the past
+          // and the player never fires. Play the remainder mid-clip instead.
+          if (transportRunning && transportSec > clipStartSec + 0.02) {
+            const elapsed = transportSec - clipStartSec;
+            const remaining = durationTime - elapsed;
+            if (remaining > 0.05) {
+              const midOffset = offsetTime + elapsed * (p.playbackRate || 1);
+              if (!p.buffer || !p.buffer.loaded || midOffset < p.buffer.duration - 0.02) {
+                try {
+                  p.start(Tone.now() + 0.02, midOffset, remaining);
+                } catch (_) {}
+              }
+            }
+            // Also arm sync for the NEXT loop pass so it plays from the top.
+            p.sync().start(clipStartSec, offsetTime, durationTime);
+          } else {
+            p.sync().start(clipStartSec, offsetTime, durationTime);
+          }
         };
 
         let targetUrl = clip.audioUrl;
@@ -3768,6 +3809,16 @@ export const toggleGlobalRecording = async () => {
     state.setPlaybackState("stopped");
 
     const trackResults = await audioEngine.stopRecording();
+
+    // Preload every recorded blob into the buffer cache BEFORE we call addClip.
+    // syncToneWithState runs synchronously off the store update; if the buffer
+    // isn't cached, Tone.Player creation goes async and the sync-scheduled
+    // start time can slip into the past — recorded clips end up silent.
+    await Promise.all(
+      trackResults
+        .filter((r: any) => r?.url)
+        .map((r: any) => audioEngine.preloadAudioBuffer(r.url)),
+    );
 
     trackResults.forEach(({ trackId, url, peaks, start16ths, duration16ths, segments }) => {
       if (!url) return;
