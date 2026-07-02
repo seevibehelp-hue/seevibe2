@@ -3810,6 +3810,16 @@ export const toggleGlobalRecording = async () => {
 
     const trackResults = await audioEngine.stopRecording();
 
+    // Preload every recorded blob into the buffer cache BEFORE we call addClip.
+    // syncToneWithState runs synchronously off the store update; if the buffer
+    // isn't cached, Tone.Player creation goes async and the sync-scheduled
+    // start time can slip into the past — recorded clips end up silent.
+    await Promise.all(
+      trackResults
+        .filter((r: any) => r?.url)
+        .map((r: any) => audioEngine.preloadAudioBuffer(r.url)),
+    );
+
     trackResults.forEach(({ trackId, url, peaks, start16ths, duration16ths, segments }) => {
       if (!url) return;
       const addedClips: { id: string; seg: any }[] = [];
