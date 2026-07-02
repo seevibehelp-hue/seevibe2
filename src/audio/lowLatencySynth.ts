@@ -1,31 +1,42 @@
 // @ts-nocheck
 import * as Tone from 'tone';
 
+// Standard production drum-kit note map. Covers General-MIDI style drum
+// octaves (C1-B2) used by the AI producer as well as the pad-preview
+// octaves (C4-D6). Note-names that don't hit a specific kit piece fall
+// back to 'perc' (a short shaker/tick) inside renderReferenceDrumAt.
 const DRUM_NOTE_TO_TYPE: Record<string, string> = {
-  C4: 'kick',
-  'C#4': 'kick',
-  D4: 'snare',
-  'D#4': 'snare',
+  // General-MIDI drum range (AI producer + drum-track MIDI clips)
+  C1: 'kick',   'C#1': 'kick',
+  D1: 'snare',  'D#1': 'clap',
+  E1: 'snare',
+  F1: 'hi-hat', 'F#1': 'hi-hat',
+  G1: 'open hh','G#1': 'open hh',
+  A1: 'crash',  'A#1': 'crash',
+  B1: 'tom',
+  C2: 'tom hi', 'C#2': 'rim',
+  D2: 'perc',   'D#2': 'perc',
+  E2: 'perc',   F2: 'perc',
+  // Pad-preview octaves (DrumPads.tsx)
+  C4: 'kick',   'C#4': 'kick',
+  D4: 'snare',  'D#4': 'snare',
   E4: 'clap',
-  F4: 'hi-hat',
-  'F#4': 'hi-hat',
-  G4: 'open hh',
-  'G#4': 'open hh',
-  A4: 'crash',
-  'A#4': 'crash',
+  F4: 'hi-hat', 'F#4': 'hi-hat',
+  G4: 'open hh','G#4': 'open hh',
+  A4: 'crash',  'A#4': 'crash',
   B4: 'tom',
-  C5: 'tom hi',
-  D5: 'rim',
-  E5: 'perc',
-  F5: 'perc',
-  G5: 'vox',
-  A5: 'vox',
+  C5: 'tom hi', D5: 'rim',
+  E5: 'perc',   F5: 'perc',
+  G5: 'vox',    A5: 'vox',
   B5: 'fx',
-  C6: 'kick',
-  D6: 'snare',
+  C6: 'kick',   D6: 'snare',
 };
 
-const referenceMasterGain = 0.85;
+// Bumped from 0.85 → 1.15. Kit-piece gains below were also raised so that
+// the pad audition and MIDI-drum playback match the loudness of the piano
+// keyboard and pro drum-pad expectations. Downstream hard limiter catches
+// any inter-voice clipping.
+const referenceMasterGain = 1.15;
 
 const activeVoices = new Map<string, { osc1: OscillatorNode; osc2?: OscillatorNode; env: GainNode }>();
 
