@@ -508,6 +508,24 @@ class AudioEngine {
   }
   private audioBufferCache: Map<string, Tone.ToneAudioBuffer> = new Map();
 
+  /**
+   * Preload an audio URL into the buffer cache so the next Tone.Player
+   * created for it uses the decoded buffer synchronously. Critical for
+   * freshly-recorded clips: without this, Player creation is async and
+   * `.sync().start(startTime)` can be scheduled for a Transport time that
+   * has already passed by the time the buffer finishes decoding, leaving
+   * the recorded clip completely silent on playback.
+   */
+  public async preloadAudioBuffer(url: string): Promise<void> {
+    if (!url || this.audioBufferCache.has(url)) return;
+    try {
+      const buf = await new Tone.ToneAudioBuffer().load(url);
+      this.audioBufferCache.set(url, buf);
+    } catch (e) {
+      console.warn("[audioEngine] preloadAudioBuffer failed for", url, e);
+    }
+  }
+
   public vocalPipeline: VocalPipeline | null = null;
   public micNode: Tone.UserMedia | any = null;
   public micStream: MediaStream | null = null;
